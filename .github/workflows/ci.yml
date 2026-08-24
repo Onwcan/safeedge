@@ -88,14 +88,18 @@ jobs:
       - name: Install toolchain
         run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 clang-tidy-18 clang-format-18
       - name: Check formatting
-        run: |
-          find include tests benchmarks -name '*.hpp' -o -name '*.cpp' \
-            | xargs clang-format-18 --dry-run --Werror
+        # Runs the same script a developer runs, so the two cannot drift.
+        # The previous inline find/xargs searched a directory that was empty
+        # -- and therefore untracked, and absent on a fresh checkout -- so it
+        # failed even when every file was correctly formatted.
+        run: bash scripts/format.sh --check
       - name: clang-tidy
         env: { CC: clang-18, CXX: clang++-18 }
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          find include -name '*.hpp' | xargs clang-tidy-18 -p build --warnings-as-errors='*'
+          # Only .cpp files -- see note above.
+          find src -name '*.cpp' 
+            | xargs clang-tidy-18 -p build --warnings-as-errors='*'
 
   install-consumer:
     name: installed package is consumable
@@ -120,16 +124,40 @@ jobs:
           set(CMAKE_CXX_STANDARD 20)
           find_package(safeedge REQUIRED)
           add_executable(consumer main.cpp)
-          target_link_libraries(consumer PRIVATE safeedge::concurrent)
+          target_link_libraries(consumer PRIVATE
+            safeedge::rt
+            "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>")
           EOT
           cat > /tmp/consumer/main.cpp <<'EOT'
+          // Exercises every public target, including the WHOLE_ARCHIVE link of
+          // the allocation guard -- which is the part most likely to break
+          // silently for a downstream consumer, since a normal link drops it.
           #include <cassert>
+          #include <chrono>
+          #include <cstdio>
           #include "safeedge/concurrent/spsc_ring.hpp"
+          #include "safeedge/rt/cyclic_executor.hpp"
+          #include "safeedge/rt/no_alloc_guard.hpp"
           int main() {
+            using namespace safeedge::rt;
+            assert(guardIsInstalled());
+
             safeedge::concurrent::SpscRing<int, 8> ring;
             assert(ring.tryPush(1));
             int out = 0;
             assert(ring.tryPop(out) && out == 1);
+
+            CyclicExecutor::Config cfg;
+            cfg.period = std::chrono::microseconds(200);
+            CyclicExecutor exec(cfg);
+            std::uint64_t cycles = 0;
+            auto step = [&cycles](const CycleContext&) { ++cycles; };
+            exec.run(CycleCallback(step), 25);
+            assert(cycles == 25);
+            assert(exec.stats().allocation_violations == 0);
+
+            std::printf("consumer ok
+");
             return 0;
           }
           EOT

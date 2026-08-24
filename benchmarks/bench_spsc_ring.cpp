@@ -252,7 +252,8 @@ Percentiles benchHandoffLatency(std::size_t items) {
   go.store(true, std::memory_order_release);
   for (std::size_t i = 0; i < items; ++i) {
     Stamped in;
-    in.sent_ns = std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count();
+    in.sent_ns =
+        std::chrono::duration_cast<Nanos>(Clock::now().time_since_epoch()).count();
     while (!ring.tryPush(in)) {
     }
     // Pace the producer so the ring is not permanently saturated. A saturated
@@ -279,21 +280,27 @@ int main() {
   std::printf("# SpscRing benchmark\n\n");
   std::printf("## Measurement conditions\n\n");
   std::printf("- Hardware concurrency: %u\n", std::thread::hardware_concurrency());
-  std::printf("- Repetitions per figure: %zu (median reported, min/max shown)\n", kRepetitions);
+  std::printf("- Repetitions per figure: %zu (median reported, min/max shown)\n",
+              kRepetitions);
   std::printf("- steady_clock::now() median cost: %lld ns\n",
               static_cast<long long>(clock_overhead));
   std::printf("- CPU pinning: %s\n", pinned ? "verified" : "FAILED or not honoured");
   std::printf("- Virtualised host detected: %s\n", virtualised ? "YES" : "no");
   if (!pinned) {
-    std::printf("\n> CPU pinning could not be verified, so the producer and consumer may\n");
-    std::printf("> have been migrated between cores mid-measurement. Cross-core figures\n");
+    std::printf(
+        "\n> CPU pinning could not be verified, so the producer and consumer may\n");
+    std::printf(
+        "> have been migrated between cores mid-measurement. Cross-core figures\n");
     std::printf("> below are not comparable across runs.\n");
   }
   if (virtualised) {
     std::printf("\n> Taken on a virtualised host. Medians and low percentiles still\n");
-    std::printf("> characterise the queue, but everything above roughly p99 characterises\n");
-    std::printf("> the hypervisor scheduler, not this code, and must not be quoted as a\n");
-    std::printf("> property of it. A defensible tail figure needs bare-metal Linux with\n");
+    std::printf(
+        "> characterise the queue, but everything above roughly p99 characterises\n");
+    std::printf(
+        "> the hypervisor scheduler, not this code, and must not be quoted as a\n");
+    std::printf(
+        "> property of it. A defensible tail figure needs bare-metal Linux with\n");
     std::printf("> isolated cores -- which is what rt-latency-lab exists to provide.\n");
   }
   std::printf("\n");
@@ -320,7 +327,8 @@ int main() {
             kThroughputItems) /
         1e6);
     naive.push_back(
-        benchCrossThreadThroughput<NaiveRing<std::uint64_t, 1024>>(kThroughputItems) / 1e6);
+        benchCrossThreadThroughput<NaiveRing<std::uint64_t, 1024>>(kThroughputItems) /
+        1e6);
   }
 
   const Spread s_single = summarize(single);
@@ -328,12 +336,15 @@ int main() {
   const Spread s_naive = summarize(naive);
 
   std::printf("## Throughput, M items/s\n\n");
-  std::printf("| Configuration                            |   median |      min |      max |\n");
-  std::printf("|------------------------------------------|----------|----------|----------|\n");
+  std::printf(
+      "| Configuration                            |   median |      min |      max |\n");
+  std::printf(
+      "|------------------------------------------|----------|----------|----------|\n");
   printSpread("Single thread, push+pop (cache hot)", s_single);
   printSpread("Cross-thread, padded + cached positions", s_padded);
   printSpread("Cross-thread, shared line, no caching", s_naive);
-  std::printf("\nLayout advantage at the median: %.2fx", s_padded.median / s_naive.median);
+  std::printf("\nLayout advantage at the median: %.2fx",
+              s_padded.median / s_naive.median);
   std::printf("  (worst rep %.2fx, best rep %.2fx)\n", s_padded.min / s_naive.max,
               s_padded.max / s_naive.min);
   std::printf("Both variants run the same algorithm and the same memory ordering;\n");
@@ -348,7 +359,8 @@ int main() {
               static_cast<long long>(handoff.p50), static_cast<long long>(handoff.p90),
               static_cast<long long>(handoff.p99), static_cast<long long>(handoff.p999),
               static_cast<long long>(handoff.max));
-  std::printf("\nSamples: %zu. Producer paced to keep the ring unsaturated.\n", kLatencyItems);
+  std::printf("\nSamples: %zu. Producer paced to keep the ring unsaturated.\n",
+              kLatencyItems);
 
   return 0;
 }

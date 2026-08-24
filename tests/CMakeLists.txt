@@ -20,3 +20,23 @@ target_link_libraries(safeedge_tests
 gtest_discover_tests(safeedge_tests
   PROPERTIES LABELS unit TIMEOUT 300
   DISCOVERY_TIMEOUT 60)
+
+# The real-time tests link the allocation guard with WHOLE_ARCHIVE.
+#
+# Without it the linker would pull in only those object files that resolve an
+# undefined symbol -- and a global operator new replacement resolves nothing,
+# so the object would be dropped and the guard would silently not exist. The
+# tests would then pass by observing no violations, which is the worst possible
+# failure mode for a guard. WHOLE_ARCHIVE forces it in.
+add_executable(safeedge_rt_tests
+  test_latency_histogram.cpp
+  test_no_alloc_guard.cpp
+  test_cyclic_executor.cpp)
+target_link_libraries(safeedge_rt_tests PRIVATE
+  safeedge::rt
+  safeedge::warnings
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>"
+  GTest::gtest_main)
+gtest_discover_tests(safeedge_rt_tests
+  PROPERTIES LABELS unit TIMEOUT 300
+  DISCOVERY_TIMEOUT 60)

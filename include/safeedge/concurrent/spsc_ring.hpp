@@ -68,13 +68,9 @@ class SpscRing {
   static constexpr std::size_t capacity() noexcept { return Capacity; }
 
   /// Producer side. Returns false if the ring is full; never blocks.
-  [[nodiscard]] bool tryPush(const T& value) noexcept {
-    return emplaceFrom(value);
-  }
+  [[nodiscard]] bool tryPush(const T& value) noexcept { return emplaceFrom(value); }
 
-  [[nodiscard]] bool tryPush(T&& value) noexcept {
-    return emplaceFrom(std::move(value));
-  }
+  [[nodiscard]] bool tryPush(T&& value) noexcept { return emplaceFrom(std::move(value)); }
 
   /// Consumer side. Returns false if the ring is empty; never blocks.
   [[nodiscard]] bool tryPop(T& out) noexcept {
