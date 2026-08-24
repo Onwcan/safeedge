@@ -1,0 +1,10 @@
+build/
+_deps/
+compile_commands.json
+.cache/
+*.o
+*.a
+*.so
+results/
+.vscode/
+.idea/

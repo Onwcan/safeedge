@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / ${{ matrix.build_type }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Debug, Release]
+        include:
+          - compiler: gcc
+            cc: gcc-14
+            cxx: g++-14
+            packages: g++-14
+          - compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+            packages: clang-18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ${{ matrix.packages }}
+      - name: Configure
+        env: { CC: "${{ matrix.cc }}", CXX: "${{ matrix.cxx }}" }
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j "$(nproc)"
+
+  # The gate that actually matters for this repository. SpscRing uses
+  # acquire/release rather than seq_cst, and x86-64's strong memory model will
+  # happily hide an incorrect pairing. TSan models the C++ abstract machine
+  # instead of the host, so it catches what the hardware would forgive.
+  # See docs/adr/0002-memory-ordering-policy.md.
+  thread-sanitizer:
+    name: ThreadSanitizer (memory ordering)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18
+      - name: Configure
+        env: { CC: clang-18, CXX: clang++-18 }
+        run: cmake --preset tsan
+      - name: Build
+        run: cmake --build --preset tsan -j "$(nproc)"
+      - name: Test
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: ctest --preset tsan
+
+  address-sanitizer:
+    name: ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18
+      - name: Configure
+        env: { CC: clang-18, CXX: clang++-18 }
+        run: cmake --preset asan
+      - name: Build
+        run: cmake --build --preset asan -j "$(nproc)"
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --preset asan
+
+  static-analysis:
+    name: clang-tidy + clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18 clang-tidy-18 clang-format-18
+      - name: Check formatting
+        run: |
+          find include tests benchmarks -name '*.hpp' -o -name '*.cpp' \
+            | xargs clang-format-18 --dry-run --Werror
+      - name: clang-tidy
+        env: { CC: clang-18, CXX: clang++-18 }
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          find include -name '*.hpp' | xargs clang-tidy-18 -p build --warnings-as-errors='*'
+
+  install-consumer:
+    name: installed package is consumable
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Build and install
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DSAFEEDGE_BUILD_TESTS=OFF -DSAFEEDGE_BUILD_BENCHMARKS=OFF \
+                -DCMAKE_INSTALL_PREFIX="$PWD/staged"
+          cmake --build build -j "$(nproc)"
+          cmake --install build
+      - name: Compile a downstream consumer against the installed package
+        run: |
+          mkdir -p /tmp/consumer
+          cat > /tmp/consumer/CMakeLists.txt <<'EOT'
+          cmake_minimum_required(VERSION 3.24)
+          project(consumer LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          find_package(safeedge REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE safeedge::concurrent)
+          EOT
+          cat > /tmp/consumer/main.cpp <<'EOT'
+          #include <cassert>
+          #include "safeedge/concurrent/spsc_ring.hpp"
+          int main() {
+            safeedge::concurrent::SpscRing<int, 8> ring;
+            assert(ring.tryPush(1));
+            int out = 0;
+            assert(ring.tryPop(out) && out == 1);
+            return 0;
+          }
+          EOT
+          cmake -S /tmp/consumer -B /tmp/consumer/build -G Ninja \
+                -DCMAKE_PREFIX_PATH="$PWD/staged" -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/consumer/build
+          /tmp/consumer/build/consumer
+
+  benchmark:
+    name: benchmark (informational)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Build and run
+        # Not a gate. A shared GitHub runner is a virtualised, noisy-neighbour
+        # environment, and failing a build on a latency number measured there
+        # would be failing on someone else's workload. The benchmark prints its
+        # own measurement conditions; the output is for reading, not asserting.
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(nproc)" --target bench_spsc_ring
+          ./build/benchmarks/bench_spsc_ring | tee benchmark-report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-report.md
