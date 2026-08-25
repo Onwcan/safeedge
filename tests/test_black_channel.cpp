@@ -110,6 +110,7 @@ TEST(BlackChannel, DeliversAContinuousStream) {
 }
 
 TEST(BlackChannel, ConsecutiveNumberNeverTakesTheValueZero) {
+  // @verifies REQ-SAF-016
   // Zero is reserved so that an all-zeroes frame -- a dead transport, an
   // uninitialised buffer, a disconnected cable presenting as silence-with-data
   // -- can never be mistaken for a legitimate telegram.
@@ -130,6 +131,7 @@ TEST(BlackChannel, ConsecutiveNumberNeverTakesTheValueZero) {
 }
 
 TEST(BlackChannel, SequenceSurvivesWraparound) {
+  // @verifies REQ-SAF-015
   // At 1 kHz the counter wraps roughly every 49 days, which is well inside the
   // uptime of an industrial installation. Wraparound is a real case here, not a
   // theoretical one, and a naive `expected == last + 1` comparison on unsigned
@@ -153,6 +155,7 @@ TEST(BlackChannel, SequenceSurvivesWraparound) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, DetectsCorruptionInEveryByteOfTheTelegram) {
+  // @verifies REQ-SAF-001
   const auto payload = samplePayload(12);
 
   for (std::size_t byte_index = 0; byte_index < payload.size() + kOverheadBytes;
@@ -179,6 +182,7 @@ TEST(BlackChannel, DetectsCorruptionInEveryByteOfTheTelegram) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, DetectsAReplayedTelegram) {
+  // @verifies REQ-SAF-003
   // A repeated telegram is byte-for-byte valid; the CRC cannot see it. A stale
   // setpoint delivered again is exactly as dangerous as a corrupted one -- the
   // machine acts confidently on a command describing where the world used to
@@ -202,6 +206,7 @@ TEST(BlackChannel, DetectsAReplayedTelegram) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, DetectsOutOfOrderDelivery) {
+  // @verifies REQ-SAF-004
   SafetySender sender(kAddress);
   Consumer consumer;
   const auto payload = samplePayload(8);
@@ -222,6 +227,7 @@ TEST(BlackChannel, DetectsOutOfOrderDelivery) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, DetectsASingleLostTelegramFromTheSequenceGap) {
+  // @verifies REQ-SAF-005
   SafetySender sender(kAddress);
   Consumer consumer;
   const auto payload = samplePayload(8);
@@ -240,6 +246,7 @@ TEST(BlackChannel, DetectsASingleLostTelegramFromTheSequenceGap) {
 }
 
 TEST(BlackChannel, CountsHowManyWereLost) {
+  // @verifies REQ-SAF-005
   SafetySender sender(kAddress);
   Consumer consumer;
   const auto payload = samplePayload(8);
@@ -260,6 +267,7 @@ TEST(BlackChannel, CountsHowManyWereLost) {
 }
 
 TEST(BlackChannel, DetectsTotalSilenceThroughTheWatchdog) {
+  // @verifies REQ-SAF-006
   // The fault that generates no event of its own. A sequence gap needs a later
   // telegram to notice; if the producer dies, none ever arrives, and only the
   // watchdog fires. This is also the most common real failure -- a pulled
@@ -281,6 +289,7 @@ TEST(BlackChannel, DetectsTotalSilenceThroughTheWatchdog) {
 }
 
 TEST(BlackChannel, WatchdogDoesNotFireBeforeTheFirstTelegram) {
+  // @verifies REQ-SAF-006
   // Otherwise whether the machine faults on startup would depend on which of
   // the producer and consumer happened to be scheduled first.
   Consumer consumer;
@@ -293,6 +302,7 @@ TEST(BlackChannel, WatchdogDoesNotFireBeforeTheFirstTelegram) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, DetectsATelegramThatArrivesTooLate) {
+  // @verifies REQ-SAF-007
   // Authentic, correctly sequenced, intact -- and useless, because it
   // describes a world that has moved on. Neither the CRC nor the sequence
   // number can see this one.
@@ -312,6 +322,7 @@ TEST(BlackChannel, DetectsATelegramThatArrivesTooLate) {
 }
 
 TEST(BlackChannel, AcceptsATelegramArrivingJustInsideTheWatchdog) {
+  // @verifies REQ-SAF-007
   SafetySender sender(kAddress);
   Consumer consumer;
   const auto payload = samplePayload(8);
@@ -331,6 +342,7 @@ TEST(BlackChannel, AcceptsATelegramArrivingJustInsideTheWatchdog) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, RejectsATelegramFromTheWrongSource) {
+  // @verifies REQ-SAF-008
   // Insertion. The foreign producer builds a structurally perfect telegram --
   // and cannot match the CRC, because the source address is folded into it and
   // never transmitted.
@@ -347,6 +359,7 @@ TEST(BlackChannel, RejectsATelegramFromTheWrongSource) {
 }
 
 TEST(BlackChannel, RejectsATelegramAddressedToSomeoneElse) {
+  // @verifies REQ-SAF-009
   // Addressing error: a genuine telegram from a genuine producer, delivered to
   // the wrong consumer. Common in a real installation after a commissioning
   // mistake, and the failure mode is a machine obeying another machine.
@@ -362,6 +375,7 @@ TEST(BlackChannel, RejectsATelegramAddressedToSomeoneElse) {
 }
 
 TEST(BlackChannel, RejectsATelegramBuiltWithMismatchedConfiguration) {
+  // @verifies REQ-SAF-008
   // The two ends were commissioned with different safety parameters. Every
   // telegram between them fails rather than being acted on -- which is the
   // right outcome, because they disagree about what the data means.
@@ -377,6 +391,7 @@ TEST(BlackChannel, RejectsATelegramBuiltWithMismatchedConfiguration) {
 }
 
 TEST(BlackChannel, RejectsRandomBytesAsMasquerade) {
+  // @verifies REQ-SAF-008
   // Masquerade: ordinary traffic on the shared transport that happens to land
   // in the safety consumer's buffer.
   std::mt19937 rng(0xBADF00D);
@@ -400,6 +415,7 @@ TEST(BlackChannel, RejectsRandomBytesAsMasquerade) {
 }
 
 TEST(BlackChannel, RejectsAnAllZeroesFrame) {
+  // @verifies REQ-SAF-016
   // What a dead transport, an uninitialised buffer or a disconnected
   // transceiver presents as. It must not validate.
   Consumer consumer;
@@ -412,6 +428,7 @@ TEST(BlackChannel, RejectsAnAllZeroesFrame) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, RejectsFramesShorterThanTheMandatoryFields) {
+  // @verifies REQ-SAF-010
   for (std::size_t size = 0; size < kOverheadBytes; ++size) {
     Consumer consumer;
     const std::vector<std::uint8_t> too_short(size, 0xAB);
@@ -421,12 +438,15 @@ TEST(BlackChannel, RejectsFramesShorterThanTheMandatoryFields) {
 }
 
 TEST(BlackChannel, RejectsFramesLongerThanTheMaximum) {
+  // @verifies REQ-SAF-010
   Consumer consumer;
   const std::vector<std::uint8_t> too_long(kMaxTelegramBytes + 1, 0xAB);
   EXPECT_EQ(consumer.deliver(too_long, kMillis), ReceiveStatus::kMalformed);
 }
 
 TEST(BlackChannel, RefusesToTruncateIntoAnUndersizedCallerBuffer) {
+  // @verifies REQ-SAF-010
+  // @verifies REQ-SAF-011
   // Silently delivering a short payload to a safety consumer is how half a
   // setpoint gets acted on.
   SafetySender sender(kAddress);
@@ -448,6 +468,7 @@ TEST(BlackChannel, RefusesToTruncateIntoAnUndersizedCallerBuffer) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, StaysInSafeStateEvenWhenGoodTelegramsResume) {
+  // @verifies REQ-SAF-012
   // The property that makes the latch worth having. An intermittent fault -- a
   // loose connector, a failing transceiver, a switch dropping frames under
   // load -- produces good telegrams most of the time. A consumer that recovered
@@ -476,6 +497,7 @@ TEST(BlackChannel, StaysInSafeStateEvenWhenGoodTelegramsResume) {
 }
 
 TEST(BlackChannel, DeliversNoPayloadWhileLatched) {
+  // @verifies REQ-SAF-011
   SafetySender sender(kAddress);
   Consumer consumer;
 
@@ -492,6 +514,7 @@ TEST(BlackChannel, DeliversNoPayloadWhileLatched) {
 }
 
 TEST(BlackChannel, AcknowledgementClearsTheLatchAndResynchronises) {
+  // @verifies REQ-SAF-013
   SafetySender sender(kAddress);
   Consumer consumer;
   const auto payload = samplePayload(8);
@@ -514,6 +537,7 @@ TEST(BlackChannel, AcknowledgementClearsTheLatchAndResynchronises) {
 }
 
 TEST(BlackChannel, AcknowledgementRestartsTheWatchdogWindow) {
+  // @verifies REQ-SAF-014
   // Otherwise the consumer times out again immediately, on the strength of how
   // long the operator took to walk to the panel.
   SafetySender sender(kAddress);
@@ -536,6 +560,13 @@ TEST(BlackChannel, AcknowledgementRestartsTheWatchdogWindow) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, EveryFaultInTheModelHasADefenceThatFires) {
+  // @verifies REQ-SAF-001
+  // @verifies REQ-SAF-003
+  // @verifies REQ-SAF-004
+  // @verifies REQ-SAF-005
+  // @verifies REQ-SAF-007
+  // @verifies REQ-SAF-008
+  // @verifies REQ-SAF-009
   // The summary artefact. Each row states a hazard from IEC 61784-3, the
   // mechanism that defends it, and an injector that produces it. If a fault is
   // ever added to TransmissionFault without a row here, this fails to compile
@@ -639,6 +670,7 @@ TEST(BlackChannel, EveryFaultInTheModelHasADefenceThatFires) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, SurvivesArbitraryMutationOfAValidTelegram) {
+  // @verifies REQ-SAF-017
   // The property the libFuzzer target in fuzz/ chases more thoroughly: no
   // input, however malformed, may make the decoder misbehave. Rejecting bad
   // frames is covered exhaustively above; this is the weaker and more
@@ -710,6 +742,7 @@ TEST(BlackChannel, SurvivesArbitraryMutationOfAValidTelegram) {
 // ---------------------------------------------------------------------------
 
 TEST(BlackChannel, EncodeAndReceiveDoNotAllocate) {
+  // @verifies REQ-RT-001
   // The safety layer sits directly on the cyclic executor's deadline path.
   ASSERT_TRUE(rt::guardIsInstalled());
   rt::setAllocationPolicy(rt::AllocationPolicy::kCount);

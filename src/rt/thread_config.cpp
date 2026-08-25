@@ -114,6 +114,7 @@ ThreadConfigReport applyThreadConfig(const ThreadConfig& config) noexcept {
     }
   }
 
+  // @satisfies REQ-RT-005
   // Read back what is actually in force. Requesting SCHED_FIFO and getting
   // SCHED_OTHER is the failure this whole struct exists to make visible, and
   // on some virtualised kernels the call succeeds while the policy does not

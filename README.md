@@ -20,8 +20,8 @@ no-allocation rule enforced rather than documented.
 | WP-08b | `rt` — cyclic executor, latency histogram, allocation guard | **Done** |
 | WP-09a | `safety` — black-channel telegram, CRC, fault model | **Done** |
 | WP-09b | `safety` — IEC 61800-5-2 supervisor, 1oo2D dual channel | **Done** |
-| WP-09c | `safety` — requirements traceability, FMEA | Next |
-| WP-10 | `ipc` — zero-copy shared-memory transport | Planned |
+| WP-09c | Requirements traceability, FMEA, CI gate | **Done** |
+| WP-10 | `ipc` — zero-copy shared-memory transport | Next |
 | WP-11 | Edge app packaging, observability | Planned |
 
 **167 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
@@ -320,6 +320,38 @@ provide.
 
 ---
 
+## Requirements traceability
+
+47 requirements in [`docs/safety-requirements.md`](docs/safety-requirements.md),
+each linked to implementing code and verifying tests by source annotations:
+
+```cpp
+// @satisfies REQ-SAF-023      in include/ or src/
+// @verifies  REQ-SAF-023      in tests/ or fuzz/
+```
+
+[`docs/traceability-matrix.md`](docs/traceability-matrix.md) is generated from
+those annotations and committed, and CI fails if a requirement has no
+implementation link, no verification link, if an annotation or an
+[FMEA](docs/fmea.md) row names a requirement that does not exist, or if the
+committed matrix is stale.
+
+The unknown-id check is the one that matters. A hand-maintained matrix is
+accurate the day it is written and decays from then on; a *generated* one that
+cannot detect its own broken links is worse still, because it manufactures
+confident evidence nobody has checked. An annotation reading `REQ-SAF-O23`
+(letter O for zero) attaches to nothing — so the negative case is exercised
+rather than assumed, and produces two failures: the unresolved reference at its
+exact line, and the requirement it abandoned.
+
+The [FMEA](docs/fmea.md) deliberately carries **no RPN numbers**. Occurrence
+scores need field data this component does not have, and inventing them produces
+arithmetic that looks like measurement. Severity is stated qualitatively because
+it genuinely is known; detection is stated as the mechanism, which is what a
+reviewer actually needs. One row — a shared systematic software defect across
+both channels — is listed with **no covering requirement**, because there is
+none it could honestly be traced to. [ADR-0007](docs/adr/0007-mechanical-traceability.md).
+
 ## What CI enforces
 
 | Gate | Why |
@@ -330,6 +362,8 @@ provide.
 | clang-tidy `--warnings-as-errors=*` | Rule set justified per exclusion |
 | clang-format `--dry-run --Werror` | Formatting never reaches review |
 | install + downstream consumer compile | The public CMake contract is tested, not assumed |
+| requirements traceability | Every requirement implemented and verified; no dangling or invented requirement ids |
+| libFuzzer on the telegram decoder | The only code here that parses bytes it did not produce |
 
 ### Known gaps, stated rather than buried
 

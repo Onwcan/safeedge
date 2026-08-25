@@ -34,6 +34,7 @@ const SafetyAddress kAddress{/*source=*/0x0011, /*destination=*/0x2200,
 
 }  // namespace
 
+// @verifies REQ-SAF-017
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   // A fresh receiver per input keeps each case independent and reproducible
   // from the input file alone -- a fuzzer finding that depends on hidden

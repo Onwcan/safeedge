@@ -42,6 +42,7 @@ inline constexpr std::size_t kCacheLineSize = 64;
 ///
 /// Memory ordering is argued in docs/adr/0002-memory-ordering-policy.md.
 template <typename T, std::size_t Capacity>
+// @satisfies REQ-RT-004
 class SpscRing {
   static_assert(Capacity >= 2, "a ring smaller than two slots cannot buffer");
   static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of two");

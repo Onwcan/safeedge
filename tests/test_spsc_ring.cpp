@@ -171,6 +171,7 @@ TEST(SpscRing, ProducerAndConsumerStateAreOnDifferentCacheLines) {
 // ---------------------------------------------------------------------------
 
 TEST(SpscRing, ConcurrentHandoffLosesNothingAndReordersNothing) {
+  // @verifies REQ-RT-004
   // A real producer and a real consumer on separate threads, spinning against
   // each other. Every value pushed must arrive exactly once, in order. Under
   // TSan this also proves the acquire/release pairing is sufficient: a missing
@@ -280,6 +281,7 @@ TEST(SpscRing, ConcurrentHandoffSurvivesAProducerThatFallsBehind) {
 }
 
 TEST(SpscRing, PayloadContentsSurviveTheHandoffIntact) {
+  // @verifies REQ-RT-004
   // Ordering is not enough: the *contents* of a slot must be fully visible to
   // the consumer before the position advances. A payload wider than a machine
   // word makes a torn or partially published write detectable.

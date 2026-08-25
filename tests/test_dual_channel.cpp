@@ -48,6 +48,7 @@ void bringUp(DualChannelSupervisor& supervisor) {
 // ---------------------------------------------------------------------------
 
 TEST(DualChannel, CombineTakesTheSafeDirectionOnEveryField) {
+  // @verifies REQ-SAF-040
   SafetyOutputs permissive;
   permissive.torque_permitted = true;
   permissive.motion_permitted = true;
@@ -77,6 +78,7 @@ TEST(DualChannel, CombineTakesTheSafeDirectionOnEveryField) {
 }
 
 TEST(DualChannel, CombineTakesTheLowerSpeedLimit) {
+  // @verifies REQ-SAF-040
   SafetyOutputs fast;
   fast.speed_limit = 100.0;
   fast.state = SafetyState::kLimitedSpeed;
@@ -123,6 +125,7 @@ TEST(DualChannel, CombinePropagatesAFaultFromEitherChannel) {
 // ---------------------------------------------------------------------------
 
 TEST(DualChannel, EitherChannelAloneCanDemandTheSafeReaction) {
+  // @verifies REQ-SAF-040
   for (int failing = 0; failing < 2; ++failing) {
     DualChannelSupervisor supervisor(testConfig());
     bringUp(supervisor);
@@ -142,6 +145,7 @@ TEST(DualChannel, EitherChannelAloneCanDemandTheSafeReaction) {
 }
 
 TEST(DualChannel, AChannelStuckPermittingMotionIsOverruledByItsPeer) {
+  // @verifies REQ-SAF-040
   // The failure this architecture exists for: one channel is wrong in the
   // unsafe direction. Its peer withholds permission and the machine stops.
   DualChannelSupervisor supervisor(testConfig());
@@ -165,6 +169,7 @@ TEST(DualChannel, AChannelStuckPermittingMotionIsOverruledByItsPeer) {
 // ---------------------------------------------------------------------------
 
 TEST(DualChannel, BriefDisagreementWithinToleranceIsNotAFault) {
+  // @verifies REQ-SAF-042
   // Independent sensors have independent noise. At a threshold boundary the
   // two channels will legitimately disagree for a cycle or two -- one reads
   // 9.99 and the other 10.01 against a limit of 10. Faulting on the first
@@ -189,6 +194,8 @@ TEST(DualChannel, BriefDisagreementWithinToleranceIsNotAFault) {
 }
 
 TEST(DualChannel, DisagreementOutlastingTheToleranceBecomesAFault) {
+  // @verifies REQ-SAF-041
+  // @verifies REQ-SAF-042
   DualChannelSupervisor supervisor(testConfig());
   bringUp(supervisor);
 
@@ -214,6 +221,7 @@ TEST(DualChannel, DisagreementOutlastingTheToleranceBecomesAFault) {
 }
 
 TEST(DualChannel, ADiscrepancyFaultIsForcedOntoBothChannels) {
+  // @verifies REQ-SAF-043
   // Neither channel can detect this on its own -- each is blind to the other
   // by construction -- so the supervisor has to drive both down. If it only
   // masked its own output, the channels would still believe they were running.
@@ -239,6 +247,7 @@ TEST(DualChannel, ADiscrepancyFaultIsForcedOntoBothChannels) {
 }
 
 TEST(DualChannel, ResolvingTheDisagreementDoesNotClearTheLatch) {
+  // @verifies REQ-SAF-044
   // A discrepancy that resolves itself is exactly the shape of an intermittent
   // fault. Letting agreement alone clear it would mean the machine kept
   // running on a channel pair already caught disagreeing once.
@@ -268,6 +277,7 @@ TEST(DualChannel, ResolvingTheDisagreementDoesNotClearTheLatch) {
 }
 
 TEST(DualChannel, LatchClearsOnlyOnceBothChannelsHaveBeenAcknowledged) {
+  // @verifies REQ-SAF-044
   DualChannelSupervisor supervisor(testConfig());
   bringUp(supervisor);
 
@@ -331,6 +341,7 @@ TEST(DualChannel, AcknowledgementStillDoesNotRestartMotion) {
 // ---------------------------------------------------------------------------
 
 TEST(DualChannel, DiagnosticsRecordDisagreementDuration) {
+  // @verifies REQ-SAF-041
   // If the longest observed disagreement sits close to the configured
   // tolerance during normal operation, the tolerance is too tight. That is
   // what this counter is for.
@@ -371,6 +382,7 @@ TEST(DualChannel, AgreeingChannelsProduceNoDisagreementAtAll) {
 }
 
 TEST(DualChannel, SensorNoiseNearAThresholdDoesNotFaultTheMachine) {
+  // @verifies REQ-SAF-042
   // The realistic scenario the tolerance exists for: two sensors straddling a
   // limit, disagreeing for a cycle at a time but never persistently.
   DualChannelSupervisor supervisor(testConfig());
@@ -397,6 +409,7 @@ TEST(DualChannel, SensorNoiseNearAThresholdDoesNotFaultTheMachine) {
 // ---------------------------------------------------------------------------
 
 TEST(DualChannel, EvaluationDoesNotAllocate) {
+  // @verifies REQ-RT-001
   ASSERT_TRUE(rt::guardIsInstalled());
   rt::setAllocationPolicy(rt::AllocationPolicy::kCount);
   rt::resetAllocationReport();

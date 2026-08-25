@@ -24,6 +24,9 @@ void writeUint32Le(std::span<std::uint8_t> bytes, std::size_t offset,
 
 }  // namespace
 
+// @satisfies REQ-SAF-001
+// @satisfies REQ-SAF-008
+// @satisfies REQ-SAF-009
 std::uint32_t computeTelegramCrc(const SafetyAddress& address,
                                  std::span<const std::uint8_t> payload,
                                  std::uint8_t status,
@@ -54,6 +57,7 @@ std::uint32_t computeTelegramCrc(const SafetyAddress& address,
 // Sender
 // ---------------------------------------------------------------------------
 
+// @satisfies REQ-SAF-016
 bool SafetySender::encode(std::span<const std::uint8_t> payload, std::uint8_t status,
                           Telegram& out) noexcept {
   if (payload.size() > kMaxPayloadBytes) {
@@ -86,11 +90,14 @@ bool SafetySender::encode(std::span<const std::uint8_t> payload, std::uint8_t st
 // Receiver
 // ---------------------------------------------------------------------------
 
+// @satisfies REQ-SAF-012
 void SafetyReceiver::latch(TransmissionFault fault) noexcept {
   safe_state_ = true;
   last_fault_ = fault;
 }
 
+// @satisfies REQ-SAF-013
+// @satisfies REQ-SAF-014
 void SafetyReceiver::acknowledgeAndReset(std::int64_t now_ns) noexcept {
   safe_state_ = false;
   last_fault_ = TransmissionFault::kNone;
@@ -102,6 +109,7 @@ void SafetyReceiver::acknowledgeAndReset(std::int64_t now_ns) noexcept {
   last_valid_ns_ = now_ns;
 }
 
+// @satisfies REQ-SAF-006
 ReceiveStatus SafetyReceiver::poll(std::int64_t now_ns) noexcept {
   if (safe_state_) {
     return ReceiveStatus::kInSafeState;
@@ -121,6 +129,9 @@ ReceiveStatus SafetyReceiver::poll(std::int64_t now_ns) noexcept {
   return ReceiveStatus::kValid;
 }
 
+// @satisfies REQ-SAF-010
+// @satisfies REQ-SAF-011
+// @satisfies REQ-SAF-017
 ReceiveStatus SafetyReceiver::receive(std::span<const std::uint8_t> raw,
                                       std::int64_t now_ns,
                                       std::span<std::uint8_t> payload_out,
@@ -170,6 +181,7 @@ ReceiveStatus SafetyReceiver::receive(std::span<const std::uint8_t> raw,
     return ReceiveStatus::kCrcMismatch;
   }
 
+  // @satisfies REQ-SAF-007
   // --- timeliness ----------------------------------------------------------
   // A telegram can be perfectly authentic, correctly sequenced, and still
   // useless because it describes a world that has moved on. Checked after the
@@ -181,6 +193,10 @@ ReceiveStatus SafetyReceiver::receive(std::span<const std::uint8_t> raw,
     return ReceiveStatus::kTimeout;
   }
 
+  // @satisfies REQ-SAF-003
+  // @satisfies REQ-SAF-004
+  // @satisfies REQ-SAF-005
+  // @satisfies REQ-SAF-015
   // --- freshness and ordering ---------------------------------------------
   if (!synchronised_) {
     // First telegram of the relationship: adopt whatever sequence the producer

@@ -195,6 +195,7 @@ TEST_F(CyclicExecutorTest, RunClearsAPreviousStopRequest) {
 // ---------------------------------------------------------------------------
 
 TEST_F(CyclicExecutorTest, DeadlinesDoNotDriftAcrossManyCycles) {
+  // @verifies REQ-RT-002
   // The core claim: because each deadline is derived from the previous
   // deadline rather than from the current time, wakeup delays are absorbed
   // rather than accumulated.
@@ -249,6 +250,7 @@ TEST_F(CyclicExecutorTest, ActuallyWaitsRatherThanSpinning) {
 // ---------------------------------------------------------------------------
 
 TEST_F(CyclicExecutorTest, OverrunIsDetectedWhenTheCallbackExceedsThePeriod) {
+  // @verifies REQ-RT-003
   CyclicExecutor::Config config;
   config.period = 500us;
   config.overrun_policy = OverrunPolicy::kSkipMissed;
@@ -263,6 +265,7 @@ TEST_F(CyclicExecutorTest, OverrunIsDetectedWhenTheCallbackExceedsThePeriod) {
 }
 
 TEST_F(CyclicExecutorTest, SkipMissedCountsTheDeadlinesItGaveUp) {
+  // @verifies REQ-RT-003
   CyclicExecutor::Config config;
   config.period = 500us;
   config.overrun_policy = OverrunPolicy::kSkipMissed;
@@ -307,6 +310,7 @@ TEST_F(CyclicExecutorTest, NoOverrunsWhenTheCallbackIsCheap) {
 // ---------------------------------------------------------------------------
 
 TEST_F(CyclicExecutorTest, TheExecutorItselfDoesNotAllocatePerCycle) {
+  // @verifies REQ-RT-001
   // Everything the loop touches -- histograms, stats, the callback wrapper --
   // must be allocation-free. The guard is on by default, so this is the
   // executor holding itself to its own contract.
@@ -326,6 +330,7 @@ TEST_F(CyclicExecutorTest, TheExecutorItselfDoesNotAllocatePerCycle) {
 }
 
 TEST_F(CyclicExecutorTest, AllocationInsideTheCallbackIsReported) {
+  // @verifies REQ-RT-001
   // The failure mode this exists to catch, demonstrated end to end.
   CyclicExecutor::Config config;
   config.period = 100us;
@@ -408,6 +413,7 @@ TEST(ThreadConfig, AffinityAppliesAndIsVerified) {
 }
 
 TEST(ThreadConfig, FailureToObtainRealTimeSchedulingIsReportedNotHidden) {
+  // @verifies REQ-RT-005
   // The single most important behaviour in this file. On a host without
   // CAP_SYS_NICE this request fails -- and the report must say so, because a
   // runtime that believes it has SCHED_FIFO when it does not produces latency

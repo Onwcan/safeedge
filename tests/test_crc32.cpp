@@ -27,6 +27,7 @@ std::vector<std::uint8_t> asBytes(const char* text) {
 // ---------------------------------------------------------------------------
 
 TEST(Crc32, MatchesTheStandardCheckVector) {
+  // @verifies REQ-SAF-002
   // "123456789" is the standard input for identifying a CRC parameter set.
   // If this passes, the implementation is CRC-32/AUTOSAR and not something
   // that merely resembles it -- which matters, because a device at the other
@@ -145,6 +146,7 @@ std::vector<std::uint8_t> withFlippedBits(std::vector<std::uint8_t> data,
 }
 
 TEST(Crc32, DetectsEverySingleBitError) {
+  // @verifies REQ-SAF-002
   // Exhaustive over a 32-byte message: 256 positions.
   std::vector<std::uint8_t> message(32);
   std::iota(message.begin(), message.end(), static_cast<std::uint8_t>(1));
@@ -158,6 +160,7 @@ TEST(Crc32, DetectsEverySingleBitError) {
 }
 
 TEST(Crc32, DetectsEveryDoubleBitError) {
+  // @verifies REQ-SAF-002
   // Exhaustive over all 32640 pairs in a 32-byte message. This is where the
   // classic CRC-32 polynomial would still be fine; the interesting case is the
   // next test.
@@ -176,6 +179,7 @@ TEST(Crc32, DetectsEveryDoubleBitError) {
 }
 
 TEST(Crc32, DetectsUpToFiveBitErrorsWhichIsTheHammingDistanceSixClaim) {
+  // @verifies REQ-SAF-002
   // The reason for choosing 0xF4ACFB13 over the familiar 0x04C11DB7 is HD=6 at
   // this length: any five bit errors are guaranteed detected. The classic
   // polynomial drops to HD=4 above 91 bits, meaning four flips can produce a
@@ -208,6 +212,7 @@ TEST(Crc32, DetectsUpToFiveBitErrorsWhichIsTheHammingDistanceSixClaim) {
 }
 
 TEST(Crc32, DetectsBurstErrorsUpToThirtyTwoBits) {
+  // @verifies REQ-SAF-002
   // A CRC of width n detects every burst of n bits or fewer. Bursts are the
   // realistic failure shape on a physical link -- a connector glitch corrupts
   // consecutive bits, not scattered ones.
@@ -258,6 +263,7 @@ TEST(Crc32, TruncationIsDetected) {
 // ---------------------------------------------------------------------------
 
 TEST(Crc32, ComputingDoesNotAllocate) {
+  // @verifies REQ-RT-001
   ASSERT_TRUE(rt::guardIsInstalled());
   rt::setAllocationPolicy(rt::AllocationPolicy::kCount);
   rt::resetAllocationReport();

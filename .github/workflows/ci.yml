@@ -193,6 +193,21 @@ jobs:
           name: fuzz-crashers
           path: crash-*
 
+  traceability:
+    name: requirements traceability
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check requirement links and matrix freshness
+        # Fails if any requirement has no implementation link, no verification
+        # link, if an annotation or FMEA row names a requirement that does not
+        # exist, or if the committed matrix is stale.
+        #
+        # The unknown-id check is the one that matters: without it a typo such
+        # as REQ-SAF-O23 (letter O for zero) verifies nothing, the gate still
+        # passes, and the matrix reports coverage that does not exist.
+        run: python3 scripts/traceability.py --check
+
   benchmark:
     name: benchmark (informational)
     runs-on: ubuntu-24.04

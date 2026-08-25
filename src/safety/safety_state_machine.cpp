@@ -12,6 +12,7 @@ void SafetyStateMachine::reset() noexcept {
   standstill_reference_ = 0.0;
 }
 
+// @satisfies REQ-SAF-036
 void SafetyStateMachine::enterSafeTorqueOff(FaultReason reason) noexcept {
   state_ = SafetyState::kSafeTorqueOff;
   // Never overwrite an already-latched fault with a later one. The first cause
@@ -28,6 +29,9 @@ void SafetyStateMachine::forceFault(FaultReason reason) noexcept {
   enterSafeTorqueOff(reason);
 }
 
+// @satisfies REQ-SAF-023
+// @satisfies REQ-SAF-024
+// @satisfies REQ-SAF-025
 bool SafetyStateMachine::unconditionalDemandActive(
     const SafetyInputs& inputs) const noexcept {
   return inputs.emergency_stop_asserted || !inputs.communication_ok ||
@@ -68,6 +72,7 @@ SafetyOutputs SafetyStateMachine::outputsFor(SafetyState state) const noexcept {
       break;
 
     case SafetyState::kStopping:
+      // @satisfies REQ-SAF-030
       // SS1: the drive keeps torque so it can decelerate under control.
       // Removing torque here would let the load coast, which for a vertical
       // axis means it falls -- the opposite of safe.
@@ -112,6 +117,8 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
     return outputsFor(state_);
   }
 
+  // @satisfies REQ-SAF-034
+  // @satisfies REQ-SAF-035
   // --- 2. Fault latch and acknowledgement ----------------------------------
   if (fault_ != FaultReason::kNone) {
     // Reaching here means every unconditional demand has cleared, so the cause
@@ -129,11 +136,14 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
     return outputsFor(state_);
   }
 
+  // @satisfies REQ-SAF-033
   // --- 3. Per-state monitors -----------------------------------------------
   // Before requests, so that a host repeatedly requesting the current function
   // cannot ride through a limit violation.
   switch (state_) {
     case SafetyState::kSelfTest:
+      // @satisfies REQ-SAF-021
+      // @satisfies REQ-SAF-022
       if (!inputs.self_test_passed) {
         // Not yet complete is indistinguishable from failed, and both mean the
         // same thing: stay where torque is off. A self test that never
@@ -149,6 +159,7 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
       return outputsFor(state_);
 
     case SafetyState::kLimitedSpeed:
+      // @satisfies REQ-SAF-026
       if (inputs.speed_magnitude > limits_.limited_speed) {
         enterSafeTorqueOff(FaultReason::kSpeedLimitExceeded);
         return outputsFor(state_);
@@ -156,6 +167,8 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
       break;
 
     case SafetyState::kOperatingStop:
+      // @satisfies REQ-SAF-027
+      // @satisfies REQ-SAF-028
       if (std::fabs(inputs.position - standstill_reference_) >
           limits_.standstill_window) {
         enterSafeTorqueOff(FaultReason::kStandstillDeviation);
@@ -168,6 +181,8 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
       break;
 
     case SafetyState::kStopping:
+      // @satisfies REQ-SAF-029
+      // @satisfies REQ-SAF-031
       if (inputs.speed_magnitude <= limits_.standstill_speed) {
         // Stopped in time. STO with no fault -- this is a successful SS1, not
         // an incident.
@@ -194,6 +209,7 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
 
   // SLP is a monitor rather than a state: it applies in every state where
   // motion is permitted, alongside whatever else is active.
+  // @satisfies REQ-SAF-032
   if (limits_.position_monitoring_enabled &&
       (state_ == SafetyState::kOperational || state_ == SafetyState::kLimitedSpeed)) {
     if (inputs.position < limits_.position_min ||
@@ -226,6 +242,7 @@ SafetyOutputs SafetyStateMachine::evaluate(const SafetyInputs& inputs) noexcept 
     case SafetyFunction::kSafeOperatingStop:
       if (state_ == SafetyState::kOperational || state_ == SafetyState::kLimitedSpeed) {
         if (inputs.speed_magnitude > limits_.standstill_speed) {
+          // @satisfies REQ-SAF-039
           // SOS means "hold where you are", which is only meaningful from a
           // standstill. Entering it while still moving would immediately
           // register as deviation from a reference captured mid-motion, so the

@@ -51,6 +51,7 @@ enum class AllocationPolicy : std::uint8_t {
 /// Also: this is a *link-time* global replacement. It is deliberately a
 /// separate CMake target so that linking it is an explicit decision, and so
 /// production binaries can leave it out entirely.
+// @satisfies REQ-RT-001
 class NoAllocScope {
  public:
   NoAllocScope() noexcept;

@@ -115,6 +115,7 @@ constexpr std::array<SafetyFunction, 5> kAllRequests{
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, DefaultInputsDemandASafeState) {
+  // @verifies REQ-SAF-037
   // A default-constructed SafetyInputs must describe the most dangerous
   // situation, not the most convenient one. If a caller forgets to populate a
   // field, the machine must stop rather than run.
@@ -132,6 +133,7 @@ TEST(SafetyStateMachine, DefaultInputsDemandASafeState) {
 }
 
 TEST(SafetyStateMachine, DefaultOutputsPermitNothing) {
+  // @verifies REQ-SAF-037
   const SafetyOutputs defaults;
   EXPECT_FALSE(defaults.torque_permitted);
   EXPECT_FALSE(defaults.motion_permitted);
@@ -141,6 +143,7 @@ TEST(SafetyStateMachine, DefaultOutputsPermitNothing) {
 }
 
 TEST(SafetyStateMachine, StartsInSelfTestWithTorqueRemoved) {
+  // @verifies REQ-SAF-020
   SafetyStateMachine machine(testLimits());
   EXPECT_EQ(machine.state(), SafetyState::kSelfTest);
   const SafetyOutputs outputs = machine.evaluate(SafetyInputs{});
@@ -166,6 +169,7 @@ TEST(SafetyStateMachine, StatesAreOrderedFromMostToLeastRestrictive) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, StaysInSelfTestUntilDiagnosticsPass) {
+  // @verifies REQ-SAF-021
   SafetyStateMachine machine(testLimits());
   SafetyInputs inputs = healthy();
   inputs.self_test_passed = false;
@@ -179,6 +183,7 @@ TEST(SafetyStateMachine, StaysInSelfTestUntilDiagnosticsPass) {
 }
 
 TEST(SafetyStateMachine, PassingSelfTestLandsInStoNeverStraightIntoMotion) {
+  // @verifies REQ-SAF-022
   // The host is already asking for unrestricted motion when the self test
   // completes. Without an explicit cycle boundary the machine would go from
   // power-on to full speed in one evaluation.
@@ -200,6 +205,7 @@ TEST(SafetyStateMachine, PassingSelfTestLandsInStoNeverStraightIntoMotion) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, EmergencyStopDrivesEveryStateToSafeTorqueOff) {
+  // @verifies REQ-SAF-023
   for (const SafetyState from : kAllStates) {
     SafetyStateMachine machine = machineIn(from);
     ASSERT_EQ(machine.state(), from) << "setup failed for " << toString(from);
@@ -216,6 +222,7 @@ TEST(SafetyStateMachine, EmergencyStopDrivesEveryStateToSafeTorqueOff) {
 }
 
 TEST(SafetyStateMachine, CommunicationLossDrivesEveryStateToSafeTorqueOff) {
+  // @verifies REQ-SAF-024
   for (const SafetyState from : kAllStates) {
     SafetyStateMachine machine = machineIn(from);
     SafetyInputs inputs = healthy(10 * kMillis);
@@ -229,6 +236,7 @@ TEST(SafetyStateMachine, CommunicationLossDrivesEveryStateToSafeTorqueOff) {
 }
 
 TEST(SafetyStateMachine, WatchdogLossDrivesEveryStateToSafeTorqueOff) {
+  // @verifies REQ-SAF-025
   for (const SafetyState from : kAllStates) {
     SafetyStateMachine machine = machineIn(from);
     SafetyInputs inputs = healthy(10 * kMillis);
@@ -257,6 +265,7 @@ TEST(SafetyStateMachine, EmergencyStopIsReportedAheadOfOtherSimultaneousCauses) 
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, FaultLatchesWhileTheCauseIsStillPresent) {
+  // @verifies REQ-SAF-034
   SafetyStateMachine machine = machineIn(SafetyState::kOperational);
   SafetyInputs inputs = healthy(kMillis);
   inputs.emergency_stop_asserted = true;
@@ -274,6 +283,7 @@ TEST(SafetyStateMachine, FaultLatchesWhileTheCauseIsStillPresent) {
 }
 
 TEST(SafetyStateMachine, AcknowledgementClearsTheFaultButDoesNotRestartMotion) {
+  // @verifies REQ-SAF-035
   // The distinction that matters most in this file. An acknowledgement button
   // that also starts the machine is how someone gets hurt silencing an alarm.
   SafetyStateMachine machine = machineIn(SafetyState::kOperational);
@@ -300,6 +310,7 @@ TEST(SafetyStateMachine, AcknowledgementClearsTheFaultButDoesNotRestartMotion) {
 }
 
 TEST(SafetyStateMachine, WithoutAcknowledgementTheMachineStaysDownForever) {
+  // @verifies REQ-SAF-034
   SafetyStateMachine machine = machineIn(SafetyState::kOperational);
   SafetyInputs inputs = healthy(kMillis);
   inputs.communication_ok = false;
@@ -313,6 +324,7 @@ TEST(SafetyStateMachine, WithoutAcknowledgementTheMachineStaysDownForever) {
 }
 
 TEST(SafetyStateMachine, TheFirstCauseIsRetainedNotTheLatest) {
+  // @verifies REQ-SAF-036
   // Once torque is removed the axis decelerates, which reliably produces
   // follow-on violations. Reporting the last of those would send a technician
   // looking at the wrong subsystem.
@@ -334,6 +346,7 @@ TEST(SafetyStateMachine, TheFirstCauseIsRetainedNotTheLatest) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, SlsFaultsWhenTheSpeedLimitIsExceeded) {
+  // @verifies REQ-SAF-026
   SafetyStateMachine machine = machineIn(SafetyState::kLimitedSpeed);
   SafetyInputs inputs = healthy(kMillis);
   inputs.speed_magnitude = 10.001;
@@ -345,6 +358,7 @@ TEST(SafetyStateMachine, SlsFaultsWhenTheSpeedLimitIsExceeded) {
 }
 
 TEST(SafetyStateMachine, SlsPermitsSpeedExactlyAtTheLimit) {
+  // @verifies REQ-SAF-026
   SafetyStateMachine machine = machineIn(SafetyState::kLimitedSpeed);
   SafetyInputs inputs = healthy(kMillis);
   inputs.speed_magnitude = 10.0;
@@ -356,6 +370,7 @@ TEST(SafetyStateMachine, SlsPermitsSpeedExactlyAtTheLimit) {
 }
 
 TEST(SafetyStateMachine, EnteringSlsWhileAlreadyTooFastFaultsImmediately) {
+  // @verifies REQ-SAF-026
   // Otherwise the machine would run one full cycle above the limit it was just
   // told to respect.
   SafetyStateMachine machine = machineIn(SafetyState::kOperational);
@@ -369,6 +384,7 @@ TEST(SafetyStateMachine, EnteringSlsWhileAlreadyTooFastFaultsImmediately) {
 }
 
 TEST(SafetyStateMachine, MonitorsRunBeforeRequestsSoAViolationCannotBeRiddenThrough) {
+  // @verifies REQ-SAF-033
   // A host that keeps re-requesting the current function must not be able to
   // keep the machine in a state whose limit it is violating.
   SafetyStateMachine machine = machineIn(SafetyState::kLimitedSpeed);
@@ -384,6 +400,7 @@ TEST(SafetyStateMachine, MonitorsRunBeforeRequestsSoAViolationCannotBeRiddenThro
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, SosHoldsPositionWithTorqueApplied) {
+  // @verifies REQ-SAF-028
   SafetyStateMachine machine = machineIn(SafetyState::kOperatingStop);
   // The request must be held. Safety functions here are level-triggered, not
   // edge-triggered: dropping to kNone means "no restriction requested", which
@@ -398,6 +415,7 @@ TEST(SafetyStateMachine, SosHoldsPositionWithTorqueApplied) {
 }
 
 TEST(SafetyStateMachine, SosFaultsOnPositionDrift) {
+  // @verifies REQ-SAF-027
   SafetyStateMachine machine = machineIn(SafetyState::kOperatingStop);
   SafetyInputs inputs = healthy(10 * kMillis);
   inputs.position = 0.6;  // window is 0.5
@@ -409,6 +427,7 @@ TEST(SafetyStateMachine, SosFaultsOnPositionDrift) {
 }
 
 TEST(SafetyStateMachine, SosFaultsOnDriftInEitherDirection) {
+  // @verifies REQ-SAF-027
   for (const double offset : {0.6, -0.6}) {
     SafetyStateMachine machine = machineIn(SafetyState::kOperatingStop);
     SafetyInputs inputs = healthy(10 * kMillis);
@@ -419,6 +438,7 @@ TEST(SafetyStateMachine, SosFaultsOnDriftInEitherDirection) {
 }
 
 TEST(SafetyStateMachine, SosFaultsWhenTheAxisStartsMoving) {
+  // @verifies REQ-SAF-028
   SafetyStateMachine machine = machineIn(SafetyState::kOperatingStop);
   SafetyInputs inputs = healthy(10 * kMillis);
   inputs.speed_magnitude = 0.2;  // standstill threshold is 0.1
@@ -427,6 +447,7 @@ TEST(SafetyStateMachine, SosFaultsWhenTheAxisStartsMoving) {
 }
 
 TEST(SafetyStateMachine, RequestingSosWhileStillMovingIsRefused) {
+  // @verifies REQ-SAF-039
   // "Hold where you are" is only meaningful from a standstill. Accepting it
   // mid-motion would capture a reference the axis has already left, and fault
   // a cycle later for a reason that looks unrelated to the actual mistake.
@@ -441,6 +462,7 @@ TEST(SafetyStateMachine, RequestingSosWhileStillMovingIsRefused) {
 }
 
 TEST(SafetyStateMachine, SosReferenceIsCapturedWhereTheAxisActuallyStopped) {
+  // @verifies REQ-SAF-027
   SafetyStateMachine machine = machineIn(SafetyState::kOperational);
 
   SafetyInputs inputs = healthy(kMillis);
@@ -489,6 +511,7 @@ TEST(SafetyStateMachine, SafetyFunctionsAreLevelTriggeredNotEdgeTriggered) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, Ss1KeepsTorqueOnWhileDecelerating) {
+  // @verifies REQ-SAF-030
   // Removing torque during a controlled stop lets the load coast. On a
   // vertical axis that means it falls, which is the opposite of safe.
   SafetyStateMachine machine = machineIn(SafetyState::kStopping);
@@ -502,6 +525,7 @@ TEST(SafetyStateMachine, Ss1KeepsTorqueOnWhileDecelerating) {
 }
 
 TEST(SafetyStateMachine, Ss1EndsInStoWithNoFaultWhenItStopsInTime) {
+  // @verifies REQ-SAF-029
   SafetyStateMachine machine = machineIn(SafetyState::kStopping);
   SafetyInputs inputs = healthy(100 * kMillis);
   inputs.speed_magnitude = 0.05;  // below standstill threshold
@@ -513,6 +537,7 @@ TEST(SafetyStateMachine, Ss1EndsInStoWithNoFaultWhenItStopsInTime) {
 }
 
 TEST(SafetyStateMachine, Ss1FaultsWhenTheStopTimeIsExceeded) {
+  // @verifies REQ-SAF-029
   SafetyStateMachine machine = machineIn(SafetyState::kStopping);
   SafetyInputs inputs = healthy(2 * kMillis + 500 * kMillis + 1);
   inputs.speed_magnitude = 4.0;  // still moving after the window
@@ -523,6 +548,7 @@ TEST(SafetyStateMachine, Ss1FaultsWhenTheStopTimeIsExceeded) {
 }
 
 TEST(SafetyStateMachine, Ss1CannotBeInterruptedByAnyRequest) {
+  // @verifies REQ-SAF-031
   // Once a controlled stop has begun, the only exits are standstill, timeout,
   // or an unconditional demand. A host cannot cancel it.
   for (const SafetyFunction request : kAllRequests) {
@@ -552,6 +578,7 @@ TEST(SafetyStateMachine, Ss1FromSafeTorqueOffIsAlreadySatisfied) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, SlpFaultsOutsideThePermittedBand) {
+  // @verifies REQ-SAF-032
   for (const double position : {100.001, -100.001}) {
     SafetyStateMachine machine = machineIn(SafetyState::kOperational);
     SafetyInputs inputs = healthy(kMillis);
@@ -564,6 +591,7 @@ TEST(SafetyStateMachine, SlpFaultsOutsideThePermittedBand) {
 }
 
 TEST(SafetyStateMachine, SlpAppliesInLimitedSpeedToo) {
+  // @verifies REQ-SAF-032
   // SLP is a monitor, not a state: it runs alongside whatever else is active
   // wherever motion is permitted.
   SafetyStateMachine machine = machineIn(SafetyState::kLimitedSpeed);
@@ -728,6 +756,7 @@ TEST(SafetyStateMachine, EveryStateAndRequestPairIsExercisedByTheTable) {
 // ---------------------------------------------------------------------------
 
 TEST(SafetyStateMachine, EvaluationIsDeterministic) {
+  // @verifies REQ-SAF-038
   // The transition table above is only meaningful if the machine holds no
   // hidden state. Two machines driven identically must agree at every step.
   SafetyStateMachine first(testLimits());
@@ -749,6 +778,7 @@ TEST(SafetyStateMachine, EvaluationIsDeterministic) {
 }
 
 TEST(SafetyStateMachine, EvaluationDoesNotAllocate) {
+  // @verifies REQ-RT-001
   ASSERT_TRUE(rt::guardIsInstalled());
   rt::setAllocationPolicy(rt::AllocationPolicy::kCount);
   rt::resetAllocationReport();

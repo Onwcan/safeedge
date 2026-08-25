@@ -5,6 +5,7 @@
 
 namespace safeedge::safety {
 
+// @satisfies REQ-SAF-040
 SafetyOutputs DualChannelSupervisor::combine(const SafetyOutputs& a,
                                              const SafetyOutputs& b) noexcept {
   SafetyOutputs combined;
@@ -45,6 +46,8 @@ SafetyOutputs DualChannelSupervisor::evaluate(const SafetyInputs& channel_a_inpu
   const SafetyOutputs b = channel_b_.evaluate(channel_b_inputs);
 
   // --- cross-comparison ----------------------------------------------------
+  // @satisfies REQ-SAF-041
+  // @satisfies REQ-SAF-042
   if (a.state != b.state) {
     ++diagnostics_.disagreeing_cycles;
     if (disagreement_since_ns_ < 0) {
@@ -61,6 +64,7 @@ SafetyOutputs DualChannelSupervisor::evaluate(const SafetyInputs& channel_a_inpu
       // from here.
       discrepancy_latched_ = true;
       ++diagnostics_.discrepancy_faults;
+      // @satisfies REQ-SAF-043
       channel_a_.forceFault(FaultReason::kChannelDiscrepancy);
       channel_b_.forceFault(FaultReason::kChannelDiscrepancy);
     }
@@ -76,6 +80,7 @@ SafetyOutputs DualChannelSupervisor::evaluate(const SafetyInputs& channel_a_inpu
     // Clearing requires both channels to have been acknowledged, which they
     // handle themselves through their own inputs. Only once neither reports a
     // fault does the supervisor release its own latch.
+    // @satisfies REQ-SAF-044
     if (!channel_a_.faultLatched() && !channel_b_.faultLatched()) {
       discrepancy_latched_ = false;
     } else {

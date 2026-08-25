@@ -177,6 +177,8 @@ TEST_F(NoAllocGuardTest, IgnorePolicyStopsCounting) {
 // ---------------------------------------------------------------------------
 
 TEST_F(NoAllocGuardTest, SpscRingOperationsDoNotAllocate) {
+  // @verifies REQ-RT-001
+  // @verifies REQ-RT-004
   // ADR-0001 claims the ring never allocates on the fast path. This is that
   // claim under test rather than under discussion.
   auto ring = std::make_unique<concurrent::SpscRing<std::uint64_t, 256>>();

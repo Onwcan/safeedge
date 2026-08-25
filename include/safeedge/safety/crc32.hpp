@@ -33,6 +33,7 @@ namespace safeedge::safety {
 ///
 /// Implementation is table-driven and allocation-free; the table is built at
 /// compile time.
+// @satisfies REQ-SAF-002
 class Crc32 {
  public:
   static constexpr std::uint32_t kPolynomial = 0xF4ACFB13U;

@@ -104,6 +104,7 @@ struct SafetyLimits {
 /// "ok" and "fault" conventions acquires an inverted condition sooner or later,
 /// and the failure mode of an inverted safety input is that the machine runs
 /// when it should not.
+// @satisfies REQ-SAF-037
 struct SafetyInputs {
   /// Magnitude of measured speed. Sign is not used: a limit is a limit in
   /// either direction, and taking the magnitude at the boundary means a caller
@@ -169,6 +170,8 @@ struct SafetyOutputs {
 ///
 /// Allocation-free, exception-free and branch-bounded, so it runs inside the
 /// cyclic executor's NoAllocScope.
+// @satisfies REQ-SAF-020
+// @satisfies REQ-SAF-038
 class SafetyStateMachine {
  public:
   SafetyStateMachine() = default;

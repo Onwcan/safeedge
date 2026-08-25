@@ -85,6 +85,7 @@ void CyclicExecutor::run(const CycleCallback& callback,
   // The deadline sequence originates here and is only ever advanced by exact
   // multiples of the period. Nothing downstream reads the clock to decide when
   // the next cycle is due, which is what makes the cadence drift-free.
+  // @satisfies REQ-RT-002
   std::int64_t deadline_ns = toNanos(nowMonotonic()) + period_ns;
 
   for (std::uint64_t index = 0; max_cycles == 0 || index < max_cycles; ++index) {
@@ -106,6 +107,7 @@ void CyclicExecutor::run(const CycleCallback& callback,
 
     std::int64_t finished_ns = 0;
     if (config_.guard_allocations) {
+      // @satisfies REQ-RT-001
       const NoAllocScope no_alloc;
       callback(context);
       finished_ns = toNanos(nowMonotonic());
@@ -121,6 +123,7 @@ void CyclicExecutor::run(const CycleCallback& callback,
     // Advance to the next scheduled deadline.
     deadline_ns += period_ns;
 
+    // @satisfies REQ-RT-003
     if (finished_ns >= deadline_ns) {
       // The cycle ran past the point at which its successor was already due.
       ++stats_.overruns;
