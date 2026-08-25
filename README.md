@@ -19,11 +19,12 @@ no-allocation rule enforced rather than documented.
 | WP-08a | `concurrent` — wait-free SPSC ring | **Done** |
 | WP-08b | `rt` — cyclic executor, latency histogram, allocation guard | **Done** |
 | WP-09a | `safety` — black-channel telegram, CRC, fault model | **Done** |
-| WP-09b | `safety` — IEC 61800-5-2 state machine (STO/SS1/SOS/SLS) | Next |
+| WP-09b | `safety` — IEC 61800-5-2 supervisor, 1oo2D dual channel | **Done** |
+| WP-09c | `safety` — requirements traceability, FMEA | Next |
 | WP-10 | `ipc` — zero-copy shared-memory transport | Planned |
 | WP-11 | Edge app packaging, observability | Planned |
 
-**112 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+**167 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
 plus a libFuzzer target on the telegram decoder.
 
 ---
@@ -170,6 +171,69 @@ acknowledged. Deliberately inconvenient: real faults are intermittent, so a
 consumer that recovered on the next good telegram would ride through a failing
 transceiver indefinitely while the machine ran on data that was only sometimes
 trustworthy. [ADR-0005](docs/adr/0005-black-channel-fault-model.md).
+
+### `safety::SafetyStateMachine` — the IEC 61800-5-2 supervisor
+
+Implements **STO, SS1-t, SOS, SLS, SLP**. Explicitly not implemented: SS2, SBC,
+SDI, SLI, SMS, SSM, SAR, SLA — each needs drive hardware this does not model.
+
+Evaluation order inside a cycle is fixed and load-bearing:
+
+1. **Unconditional demands** — E-stop, communication loss, watchdog loss. These
+   override every state and every request. Not inputs to be arbitrated;
+   conditions under which permission is not available to grant.
+2. **Fault latch and acknowledgement.**
+3. **Per-state monitors.** Before requests, so a host repeatedly requesting the
+   function it is currently violating cannot ride through the violation.
+4. **Requested transitions.**
+
+Three properties worth calling out:
+
+**Requests are level-triggered.** A function stays active only while still
+requested; dropping to `kNone` releases it. The alternative is equally
+defensible and the difference is sharp — under edge triggering a silent host
+leaves the machine restricted, which is safe; under level triggering it releases
+the restriction, which is not. That moves the entire burden of detecting a
+silent host onto the watchdog, which is why `communication_ok` and
+`heartbeat_ok` are unconditional demands rather than advisory inputs.
+
+**Acknowledgement clears a fault but does not restart motion.** A separate
+enable is required. Collapsing the two is how an acknowledgement button becomes
+a start button.
+
+**The first cause is retained, not the latest.** Once torque is removed the axis
+decelerates and reliably produces follow-on violations; reporting the most
+recent one would send a technician to the wrong subsystem.
+
+Every default is fail-safe: a default-constructed `SafetyInputs` describes a
+machine with the E-stop pressed and no communication.
+
+### `safety::DualChannelSupervisor` — 1oo2D
+
+**1oo2**: either channel alone can demand the safe reaction. Every field of the
+combined output takes the safe direction, so no channel can grant a permission
+its peer withholds. **D**: the channels are cross-compared every cycle, so a
+channel that has failed in a way it cannot itself detect shows up as a
+disagreement.
+
+Disagreement is tolerated briefly — independent sensors have independent noise,
+and at a threshold boundary they will legitimately differ for a cycle or two.
+Faulting on the first disagreement makes the machine unusable; never faulting
+makes the diagnostics decorative.
+
+**The limitation that matters most: both channels run the same code.** Real
+1oo2D uses diverse implementations, because two identical ones share identical
+systematic faults — a logic error produces the same wrong answer in both, they
+agree perfectly, and cross-comparison reports everything is fine. This defends
+against random hardware faults and divergent sensor input. It does not defend
+against a software defect, and running the same function twice never will.
+
+[ADR-0006](docs/adr/0006-safety-supervisor-and-dual-channel.md).
+
+**None of this is certified, and none of it is a safety case.** A real
+installation needs a qualified implementation, an assessed process and a
+notified body. What it demonstrates is that the functions, their interactions
+and their failure modes are understood.
 
 ### `rt::LatencyHistogram`
 

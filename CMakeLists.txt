@@ -120,7 +120,9 @@ set_target_properties(safeedge_rt_alloc_guard PROPERTIES
 # argued for, in isolation from the transport and executor code around it.
 add_library(safeedge_safety
   src/safety/crc32.cpp
-  src/safety/black_channel.cpp)
+  src/safety/black_channel.cpp
+  src/safety/safety_state_machine.cpp
+  src/safety/dual_channel.cpp)
 add_library(safeedge::safety ALIAS safeedge_safety)
 target_include_directories(safeedge_safety
   PUBLIC

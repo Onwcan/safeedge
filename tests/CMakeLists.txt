@@ -43,7 +43,9 @@ gtest_discover_tests(safeedge_rt_tests
 
 add_executable(safeedge_safety_tests
   test_crc32.cpp
-  test_black_channel.cpp)
+  test_black_channel.cpp
+  test_safety_state_machine.cpp
+  test_dual_channel.cpp)
 target_link_libraries(safeedge_safety_tests PRIVATE
   safeedge::safety
   safeedge::rt
