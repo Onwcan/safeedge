@@ -47,6 +47,7 @@ target_compile_options(safeedge_warnings INTERFACE
 target_compile_options(safeedge_warnings INTERFACE
   $<$<CXX_COMPILER_ID:GNU>:-Wno-interference-size>)
 
+
 # ---------------------------------------------------------------------------
 # Components
 #
@@ -135,6 +136,31 @@ set_target_properties(safeedge_safety PROPERTIES
   VERSION   ${PROJECT_VERSION}
   SOVERSION ${PROJECT_VERSION_MAJOR})
 
+# ipc -- the transport layer: shared memory and the primitives that live in it.
+add_library(safeedge_ipc
+  src/ipc/shared_memory.cpp)
+add_library(safeedge::ipc ALIAS safeedge_ipc)
+target_include_directories(safeedge_ipc
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(safeedge_ipc
+  PUBLIC  safeedge::concurrent
+  PRIVATE safeedge::warnings)
+set_target_properties(safeedge_ipc PROPERTIES
+  OUTPUT_NAME safeedge-ipc
+  EXPORT_NAME ipc
+  VERSION   ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR})
+
+# shm_open lives in libc on glibc 2.34 and later, and in librt before that.
+# Linking it only when it exists keeps the build working on both without
+# forcing every consumer to know which they have.
+find_library(SAFEEDGE_LIBRT rt)
+if(SAFEEDGE_LIBRT)
+  target_link_libraries(safeedge_ipc PUBLIC ${SAFEEDGE_LIBRT})
+endif()
+
 if(SAFEEDGE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
@@ -156,7 +182,7 @@ endif()
 # Install / export
 # ---------------------------------------------------------------------------
 install(TARGETS safeedge_concurrent safeedge_rt safeedge_rt_alloc_guard
-                safeedge_safety safeedge_warnings
+                safeedge_safety safeedge_ipc safeedge_warnings
         EXPORT safeedgeTargets
         LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -21,11 +21,12 @@ no-allocation rule enforced rather than documented.
 | WP-09a | `safety` — black-channel telegram, CRC, fault model | **Done** |
 | WP-09b | `safety` — IEC 61800-5-2 supervisor, 1oo2D dual channel | **Done** |
 | WP-09c | Requirements traceability, FMEA, CI gate | **Done** |
-| WP-10 | `ipc` — zero-copy shared-memory transport | Next |
-| WP-11 | Edge app packaging, observability | Planned |
+| WP-10 | `ipc` — zero-copy shared-memory transport | **Done** |
+| WP-11 | Edge app packaging, observability | Next |
 
-**167 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
-plus a libFuzzer target on the telegram decoder.
+**195 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+plus a libFuzzer target on the telegram decoder. The shared-memory tests
+genuinely `fork()` rather than simulating a second process with a thread.
 
 ---
 
@@ -234,6 +235,52 @@ against a software defect, and running the same function twice never will.
 installation needs a qualified implementation, an assessed process and a
 notified body. What it demonstrates is that the functions, their interactions
 and their failure modes are understood.
+
+### `ipc::SharedMemoryRegion` / `ipc::SeqlockSlot`
+
+Two kinds of data move between the runtime's processes, and they want different
+structures. **Queued** data, where every item matters, uses `SpscRing`.
+**State**, where only the newest value has meaning — current joint position,
+current safety state — uses a seqlock. Conflating them is a common and expensive
+mistake: a queue applies backpressure to preserve values nobody wants, and on a
+real-time producer backpressure is either a blocked deadline or a silent drop.
+
+Measured cross-process round trip, 64-byte messages, 20 000 iterations:
+
+| Transport | p50 | p99 | p99.9 |
+|---|---:|---:|---:|
+| shared memory (seqlock) | **446 ns** | **587 ns** | **6.3 µs** |
+| Unix stream socket | 27 968 ns | 85 025 ns | 241 580 ns |
+| pipe | 27 313 ns | 81 959 ns | 229 763 ns |
+
+Tens of times faster at the median — but the tail is the interesting column.
+Nearly **three orders of magnitude tighter at p99.9**, and for a cycle that has
+to fit inside a deadline, the tail is what decides whether it fits.
+
+Two costs, both real:
+
+**It burns a core.** Shared memory does not make the work cheaper, it moves the
+cost from a kernel wakeup to a spinning reader. The benchmark reports the child's
+CPU time next to the latency for that reason — and even that understates it,
+because the benchmark keeps both sides busy. A consumer polling for messages
+arriving every millisecond spins through the other 99% of the time.
+
+**It gives up isolation.** A peer with the region mapped can write anything
+anywhere in it, at any time. That is the price of zero copy. Where the peer is
+not trusted, the black-channel CRC and sequence number apply exactly as they do
+over a network — the safety layer does not care whether the untrusted transport
+is Ethernet or a page of memory.
+
+The seqlock is **race-free by construction**: the payload is an array of atomics
+copied word by word, not plain memory read while a writer may be writing it. The
+textbook version is a data race by the letter of the standard, TSan reports it,
+and the usual responses are to suppress the sanitiser or shrug. Reader retries
+are bounded, because a writer that died mid-update leaves the counter odd
+forever and an unbounded loop would hang a reader inside its own control cycle.
+
+[ADR-0008](docs/adr/0008-shared-memory-transport.md) records the ordering — and
+that GCC's ThreadSanitizer cannot instrument `std::atomic_thread_fence`, which
+is why the ordering is expressed per-operation rather than with fences.
 
 ### `rt::LatencyHistogram`
 

@@ -8,9 +8,9 @@ annotations in the source, and CI fails if any requirement has no
 implementation link, no verification link, or if an annotation names a
 requirement that does not exist.
 
-- Requirements: **47**
-- With an implementation link: **47/47**
-- With a verification link: **47/47**
+- Requirements: **56**
+- With an implementation link: **56/56**
+- With a verification link: **56/56**
 
 This is not a safety case. See `docs/safety-requirements.md`.
 
@@ -58,9 +58,18 @@ This is not a safety case. See `docs/safety-requirements.md`.
 | **REQ-SAF-042** | Brief disagreement is tolerated | `src/safety/dual_channel.cpp` | `DualChannel.BriefDisagreementWithinToleranceIsNotAFault`<br>`DualChannel.DisagreementOutlastingTheToleranceBecomesAFault`<br>`DualChannel.SensorNoiseNearAThresholdDoesNotFaultTheMachine` |
 | **REQ-SAF-043** | A discrepancy fault is forced onto both channels | `src/safety/dual_channel.cpp` | `DualChannel.ADiscrepancyFaultIsForcedOntoBothChannels` |
 | **REQ-SAF-044** | Discrepancy recovery requires both channels | `src/safety/dual_channel.cpp` | `DualChannel.ResolvingTheDisagreementDoesNotClearTheLatch`<br>`DualChannel.LatchClearsOnlyOnceBothChannelsHaveBeenAcknowledged` |
-| **REQ-RT-001** | The real-time path does not allocate | `include/safeedge/rt/no_alloc_guard.hpp`<br>`src/rt/cyclic_executor.cpp` | `BlackChannel.EncodeAndReceiveDoNotAllocate`<br>`Crc32.ComputingDoesNotAllocate`<br>`CyclicExecutorTest.TheExecutorItselfDoesNotAllocatePerCycle`<br>`CyclicExecutorTest.AllocationInsideTheCallbackIsReported`<br>`DualChannel.EvaluationDoesNotAllocate`<br>`NoAllocGuardTest.SpscRingOperationsDoNotAllocate`<br>`SafetyStateMachine.EvaluationDoesNotAllocate` |
+| **REQ-RT-001** | The real-time path does not allocate | `include/safeedge/rt/no_alloc_guard.hpp`<br>`src/rt/cyclic_executor.cpp` | `BlackChannel.EncodeAndReceiveDoNotAllocate`<br>`Crc32.ComputingDoesNotAllocate`<br>`CyclicExecutorTest.TheExecutorItselfDoesNotAllocatePerCycle`<br>`CyclicExecutorTest.AllocationInsideTheCallbackIsReported`<br>`DualChannel.EvaluationDoesNotAllocate`<br>`NoAllocGuardTest.SpscRingOperationsDoNotAllocate`<br>`SafetyStateMachine.EvaluationDoesNotAllocate`<br>`SeqlockSlot.StoreAndLoadDoNotAllocate` |
 | **REQ-RT-002** | Cyclic execution is drift-free | `src/rt/cyclic_executor.cpp` | `CyclicExecutorTest.DeadlinesDoNotDriftAcrossManyCycles` |
 | **REQ-RT-003** | Deadline overruns are detected and counted | `src/rt/cyclic_executor.cpp` | `CyclicExecutorTest.OverrunIsDetectedWhenTheCallbackExceedsThePeriod`<br>`CyclicExecutorTest.SkipMissedCountsTheDeadlinesItGaveUp` |
 | **REQ-RT-004** | Handoff to non-real-time threads is wait-free | `include/safeedge/concurrent/spsc_ring.hpp` | `NoAllocGuardTest.SpscRingOperationsDoNotAllocate`<br>`SpscRing.ConcurrentHandoffLosesNothingAndReordersNothing`<br>`SpscRing.PayloadContentsSurviveTheHandoffIntact` |
 | **REQ-RT-005** | Real-time scheduling failures are reported | `src/rt/thread_config.cpp` | `ThreadConfig.FailureToObtainRealTimeSchedulingIsReportedNotHidden` |
+| **REQ-IPC-001** | Region creation never adopts an existing region | `src/ipc/shared_memory.cpp` | `SharedMemory.CreateRefusesAnExistingName` |
+| **REQ-IPC-002** | A region smaller than requested is rejected | `src/ipc/shared_memory.cpp` | `SharedMemory.OpeningWithAnOversizedRequestFails` |
+| **REQ-IPC-003** | Malformed region names are rejected | `src/ipc/shared_memory.cpp` | `SharedMemory.MalformedNamesAreRejectedWithAClearError` |
+| **REQ-IPC-004** | Mapping lifetime is independent of name lifetime | `src/ipc/shared_memory.cpp` | `SharedMemory.UnlinkIsIdempotent`<br>`SharedMemory.TheMappingOutlivesTheName` |
+| **REQ-IPC-005** | Region ownership transfers exactly once | `src/ipc/shared_memory.cpp` | `SharedMemory.MoveTransfersOwnershipExactlyOnce` |
+| **REQ-IPC-006** | Readers never observe a partially written value | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.ConcurrentReadersNeverObserveATornValue`<br>`SeqlockSlot.WorksInSharedMemoryAcrossAForkedProcess` |
+| **REQ-IPC-007** | Reader retries are bounded | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.ZeroAttemptsFailsRatherThanReadingAnyway` |
+| **REQ-IPC-008** | Publishing is wait-free and allocation-free | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.StoreAndLoadDoNotAllocate` |
+| **REQ-IPC-009** | Observed values never regress | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.ValuesObservedByAReaderNeverGoBackwards` |
 

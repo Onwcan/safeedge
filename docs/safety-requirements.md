@@ -273,3 +273,53 @@ allocation, syscalls or unbounded retry.
 **Statement:** Where requested scheduling policy, CPU affinity or memory locking
 does not take effect, the executor shall report the discrepancy rather than
 proceed as though it had succeeded.
+
+---
+
+## Inter-process transport
+
+### REQ-IPC-001 — Region creation never adopts an existing region
+
+**Statement:** Creating a shared-memory region shall fail if the name already
+exists, rather than attaching to whatever is there.
+
+### REQ-IPC-002 — A region smaller than requested is rejected
+
+**Statement:** Opening an existing region shall fail if it is smaller than the
+requested size, rather than mapping beyond its end.
+
+### REQ-IPC-003 — Malformed region names are rejected
+
+**Statement:** A name that does not begin with a single leading slash, or that
+contains a further slash, shall be rejected before any system call is made.
+
+### REQ-IPC-004 — Mapping lifetime is independent of name lifetime
+
+**Statement:** Removing a region's name shall not invalidate any existing
+mapping, and destroying a mapping shall not remove the name.
+
+### REQ-IPC-005 — Region ownership transfers exactly once
+
+**Statement:** Moving a region shall transfer the mapping to the destination and
+leave the source owning nothing, so that the mapping is released exactly once.
+
+### REQ-IPC-006 — Readers never observe a partially written value
+
+**Statement:** A value accepted by a seqlock reader shall be one complete
+published value, never a mixture of two.
+
+### REQ-IPC-007 — Reader retries are bounded
+
+**Statement:** A seqlock read shall fail after a bounded number of attempts
+rather than retry indefinitely, so that a writer which died mid-update cannot
+stall a reader.
+
+### REQ-IPC-008 — Publishing is wait-free and allocation-free
+
+**Statement:** Publishing a value shall complete in a bounded number of
+instructions, without locks, allocation or waiting for any reader.
+
+### REQ-IPC-009 — Observed values never regress
+
+**Statement:** Successive values accepted by a reader shall never move backwards
+through the publication sequence.

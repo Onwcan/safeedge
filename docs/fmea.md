@@ -103,3 +103,19 @@ Running the same function twice never detects a fault in that function. See
 | R-04 | Handoff | Lock or allocation between RT and non-RT threads | Priority inversion; deadline missed | TSan; allocation guard | Wait-free SPSC ring | Critical | REQ-RT-004 |
 | R-05 | Deployment | Requested real-time scheduling silently not granted | Every latency figure is fiction; failure appears in the field | Policy, affinity and memory locking read back from the kernel | Discrepancy reported, not assumed away | High | REQ-RT-005 |
 | R-06 | Measurement | Benchmarks quoted from a virtualised host | Tail figures describe the hypervisor, not the code | Benchmark detects virtualisation and pinning failure | Conditions printed above the numbers | Moderate | — |
+
+---
+
+## Inter-process transport
+
+| # | Item | Failure mode | Effect | Detection | Mitigation | Severity | Requirements |
+|---|---|---|---|---|---|---|---|
+| T-01 | Startup | A crashed instance left its region name behind | New instance attaches to the previous instance's half-written state | Exclusive creation fails with EEXIST | Adoption is refused; reclaiming a stale name is an explicit act | Critical | REQ-IPC-001 |
+| T-02 | Configuration | Peers disagree about region size | mmap maps past the end and the excess raises SIGBUS on first touch, far from the cause | Size read back before mapping | Open fails with a size error instead | High | REQ-IPC-002 |
+| T-03 | Integration | Malformed region name | Confusing EINVAL from inside libc | Name validated against the POSIX rule first | Rejected with an error naming the actual rule | Moderate | REQ-IPC-003 |
+| T-04 | Shutdown | Name removed while a peer still holds a mapping | Peer loses its data mid-operation | — | Mapping and name have independent lifetimes | High | REQ-IPC-004 |
+| T-05 | Lifetime | Region moved between owners | Double munmap, or a leaked mapping | — | Move leaves the source owning nothing | High | REQ-IPC-005 |
+| T-06 | Transport | Reader samples while the writer is publishing | Consumer acts on half of one value and half of the next | Sequence counter sampled before and after | Read retried; torn values never accepted | Critical | REQ-IPC-006 |
+| T-07 | Peer | Writer process dies mid-update | Counter left odd forever; an unbounded reader spins inside its own control cycle | Retry budget | Read fails and is recoverable rather than hanging | Critical | REQ-IPC-007 |
+| T-08 | Payload | A type whose all-zero state is not a valid value | Reader observing the region before the first write accepts a value the type can never produce | Caught by the torn-value test during development | Documented constraint: the zero value must be valid | High | REQ-IPC-006 |
+| T-09 | **Peer** | **A buggy or hostile peer writes anywhere in the region** | **Arbitrary corruption of runtime state; shared memory provides no isolation whatsoever** | **None at this layer** | **None. Where the peer is not trusted, the black-channel CRC and sequence number apply exactly as they do over a network** | **Critical** | REQ-SAF-001, REQ-SAF-008 |

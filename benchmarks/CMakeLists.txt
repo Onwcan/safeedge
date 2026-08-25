@@ -12,5 +12,11 @@ target_compile_options(bench_spsc_ring PRIVATE
 
 add_custom_target(run_benchmarks
   COMMAND bench_spsc_ring
-  DEPENDS bench_spsc_ring
+  COMMAND bench_transports
+  DEPENDS bench_spsc_ring bench_transports
   COMMENT "Running safeedge benchmarks")
+
+add_executable(bench_transports bench_transports.cpp)
+target_link_libraries(bench_transports PRIVATE safeedge::ipc safeedge::warnings)
+target_compile_options(bench_transports PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O2>)
