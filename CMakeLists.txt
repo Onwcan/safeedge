@@ -15,6 +15,7 @@ option(SAFEEDGE_BUILD_TESTS      "Build unit tests"         ${SAFEEDGE_IS_TOP_LE
 option(SAFEEDGE_BUILD_BENCHMARKS "Build latency benchmarks" ${SAFEEDGE_IS_TOP_LEVEL})
 option(SAFEEDGE_ENABLE_WERROR    "Treat warnings as errors" ON)
 option(SAFEEDGE_BUILD_FUZZERS    "Build libFuzzer targets (Clang only)" OFF)
+option(SAFEEDGE_BUILD_EXAMPLES   "Build example programs" ${SAFEEDGE_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -161,6 +162,36 @@ if(SAFEEDGE_LIBRT)
   target_link_libraries(safeedge_ipc PUBLIC ${SAFEEDGE_LIBRT})
 endif()
 
+# edge -- the service wrapper: observability endpoints and metric rendering.
+# Everything here runs off the deadline path by construction.
+add_library(safeedge_edge
+  src/edge/http_server.cpp
+  src/edge/metrics.cpp)
+add_library(safeedge::edge ALIAS safeedge_edge)
+target_include_directories(safeedge_edge
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(safeedge_edge
+  PUBLIC  safeedge::ipc Threads::Threads
+  PRIVATE safeedge::warnings)
+set_target_properties(safeedge_edge PROPERTIES
+  OUTPUT_NAME safeedge-edge
+  EXPORT_NAME edge
+  VERSION   ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR})
+
+# safeedged -- the runtime as a service. Statically linked so the container
+# image needs no runtime libraries at all; see ADR-0009.
+add_executable(safeedged src/apps/safeedged.cpp)
+target_link_libraries(safeedged PRIVATE
+  safeedge::edge
+  safeedge::rt
+  safeedge::safety
+  safeedge::ipc
+  safeedge::warnings
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>")
+
 if(SAFEEDGE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
@@ -170,7 +201,10 @@ if(SAFEEDGE_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
 
-if(SAFEEDGE_IS_TOP_LEVEL)
+# Conditional on its own option, not on being top level. The container build
+# copies only what safeedged needs, so examples/ is not present there and an
+# unconditional add_subdirectory would fail the image build.
+if(SAFEEDGE_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
@@ -182,7 +216,7 @@ endif()
 # Install / export
 # ---------------------------------------------------------------------------
 install(TARGETS safeedge_concurrent safeedge_rt safeedge_rt_alloc_guard
-                safeedge_safety safeedge_ipc safeedge_warnings
+                safeedge_safety safeedge_ipc safeedge_edge safeedge_warnings
         EXPORT safeedgeTargets
         LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}

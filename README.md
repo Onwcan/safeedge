@@ -22,13 +22,24 @@ no-allocation rule enforced rather than documented.
 | WP-09b | `safety` — IEC 61800-5-2 supervisor, 1oo2D dual channel | **Done** |
 | WP-09c | Requirements traceability, FMEA, CI gate | **Done** |
 | WP-10 | `ipc` — zero-copy shared-memory transport | **Done** |
-| WP-11 | Edge app packaging, observability | Next |
+| WP-11 | `edge` — container packaging, metrics, dashboard | **Done** |
 
-**195 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+**208 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
 plus a libFuzzer target on the telegram decoder. The shared-memory tests
 genuinely `fork()` rather than simulating a second process with a thread.
 
+**63 requirements**, every one linked to implementing code and verifying tests,
+with a CI gate that fails on a broken link.
+
 ---
+
+## Run it
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+Grafana on `:3000`, Prometheus on `:9090`, the runtime's metrics on `:9100`.
 
 ## Build
 
@@ -282,6 +293,56 @@ forever and an unbounded loop would hang a reader inside its own control cycle.
 that GCC's ThreadSanitizer cannot instrument `std::atomic_thread_fence`, which
 is why the ordering is expressed per-operation rather than with fences.
 
+### The container
+
+The runtime image is **1.51 MB** and contains **exactly one file** — the
+statically linked binary. No shell, no package manager, no libc. An image with
+no userland cannot have a userland vulnerability, which is a stronger property
+than keeping one patched.
+
+CI enforces that rather than asserting it: it unpacks the image layers and fails
+if they hold anything but `safeedged`, with an 8 MB budget so a debug tool added
+"just for now" fails the build instead of quietly staying.
+
+The cost is real: there is nothing to `docker exec` into. That works here only
+because the diagnostics were designed for it — structured JSON logs and a
+metrics endpoint carrying everything the runtime knows about itself.
+
+### The conflict worth knowing about
+
+`SCHED_FIFO` needs `CAP_SYS_NICE`. A container that drops every capability
+**cannot do real-time scheduling** — it starts, serves metrics, passes its
+healthcheck, and silently misses deadlines. Same image, two runs:
+
+| Run | `safeedge_realtime_scheduling_granted` |
+|---|---|
+| `--cap-drop=ALL` | **0** |
+| `--cap-drop=ALL --cap-add=SYS_NICE --ulimit rtprio=99` | **1** |
+
+Security hardening and real-time behaviour are in direct tension, and the
+default advice — drop everything — silently costs the runtime the property it
+exists for. The compose file adds `SYS_NICE` back deliberately with the reason
+written beside it.
+
+The mitigation is not the comment, though. It is that
+`safeedge_realtime_scheduling_granted` is the **first metric emitted and the
+first, largest panel on the dashboard**: every latency figure next to it is
+meaningless when it reads 0, and a dashboard showing microsecond jitter without
+it would be actively misleading.
+
+### Liveness is not readiness
+
+`/healthz` asks whether the process is functioning. `/readyz` asks whether it is
+fit to be used. A latched safety fault makes it **not ready** but still
+**healthy** — because restarting the container would throw away the fault
+information an engineer needs, and restart a machine whose safety supervisor had
+just decided it should not be running.
+
+`docker stop` completes in **829 ms** against a 10 s grace period. That matters:
+SIGKILL would mean the runtime never reaches a safe state, and PID 1 has no
+default signal disposition, so the handler has to be installed explicitly.
+[ADR-0009](docs/adr/0009-edge-packaging.md).
+
 ### `rt::LatencyHistogram`
 
 Fixed-size, allocation-free, logarithmic bucketing at constant ~3.1% relative
@@ -409,7 +470,9 @@ none it could honestly be traced to. [ADR-0007](docs/adr/0007-mechanical-traceab
 | clang-tidy `--warnings-as-errors=*` | Rule set justified per exclusion |
 | clang-format `--dry-run --Werror` | Formatting never reaches review |
 | install + downstream consumer compile | The public CMake contract is tested, not assumed |
-| requirements traceability | Every requirement implemented and verified; no dangling or invented requirement ids |
+| requirements traceability | Every requirement implemented and verified; no dangling or invented ids. Scans the Dockerfile and compose file too, because some requirements are implemented there and nowhere else |
+| container: layers, size, run, stop | Image holds exactly one file, stays inside an 8 MB budget, serves its endpoints hardened, and honours SIGTERM inside 5 s |
+| Trivy scan + SBOM | Nothing to find in an image with no userland — asserted rather than assumed |
 | libFuzzer on the telegram decoder | The only code here that parses bytes it did not produce |
 
 ### Known gaps, stated rather than buried

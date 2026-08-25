@@ -68,3 +68,14 @@ target_link_libraries(safeedge_ipc_tests PRIVATE
 gtest_discover_tests(safeedge_ipc_tests
   PROPERTIES LABELS unit TIMEOUT 300
   DISCOVERY_TIMEOUT 60)
+
+add_executable(safeedge_edge_tests
+  test_edge_service.cpp)
+target_link_libraries(safeedge_edge_tests PRIVATE
+  safeedge::edge
+  safeedge::ipc
+  safeedge::warnings
+  GTest::gtest_main)
+gtest_discover_tests(safeedge_edge_tests
+  PROPERTIES LABELS unit TIMEOUT 300
+  DISCOVERY_TIMEOUT 60)

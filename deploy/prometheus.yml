@@ -1,0 +1,11 @@
+global:
+  # Faster than the usual 15s. A control runtime's interesting behaviour --
+  # an overrun, a safety transition -- happens on a timescale where a 15s
+  # sample would miss it entirely.
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: safeedge
+    static_configs:
+      - targets: ["safeedge:9100"]

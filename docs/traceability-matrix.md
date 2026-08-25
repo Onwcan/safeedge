@@ -8,9 +8,9 @@ annotations in the source, and CI fails if any requirement has no
 implementation link, no verification link, or if an annotation names a
 requirement that does not exist.
 
-- Requirements: **56**
-- With an implementation link: **56/56**
-- With a verification link: **56/56**
+- Requirements: **63**
+- With an implementation link: **63/63**
+- With a verification link: **63/63**
 
 This is not a safety case. See `docs/safety-requirements.md`.
 
@@ -72,4 +72,11 @@ This is not a safety case. See `docs/safety-requirements.md`.
 | **REQ-IPC-007** | Reader retries are bounded | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.ZeroAttemptsFailsRatherThanReadingAnyway` |
 | **REQ-IPC-008** | Publishing is wait-free and allocation-free | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.StoreAndLoadDoNotAllocate` |
 | **REQ-IPC-009** | Observed values never regress | `include/safeedge/ipc/seqlock_slot.hpp` | `SeqlockSlot.ValuesObservedByAReaderNeverGoBackwards` |
+| **REQ-EDGE-001** | Shutdown is graceful and prompt | `src/apps/safeedged.cpp` | `HttpServer.StopIsPromptAndIdempotent` |
+| **REQ-EDGE-002** | The service reports liveness and readiness separately | `include/safeedge/edge/http_server.hpp` | `HttpServer.AHandlerCanReportUnavailable` |
+| **REQ-EDGE-003** | Real-time scheduling status is exported | `include/safeedge/edge/runtime_snapshot.hpp`<br>`deploy/docker-compose.yml` | `Metrics.ExportsWhetherRealTimeSchedulingWasGranted` |
+| **REQ-EDGE-004** | A failed metrics read is reported, not hidden | `include/safeedge/edge/metrics.hpp` | `Metrics.ReportsWhenTheSnapshotCouldNotBeRead` |
+| **REQ-EDGE-005** | The runtime image contains no userland | `Dockerfile` | `HttpServer.ServesARegisteredRoute` |
+| **REQ-EDGE-006** | The service runs unprivileged | `Dockerfile`<br>`deploy/docker-compose.yml` | `HttpServer.ServesARegisteredRoute` |
+| **REQ-EDGE-007** | Endpoint requests cannot stall the service | `src/edge/http_server.cpp` | `HttpServer.NonGetMethodsAreRejected`<br>`HttpServer.SurvivesAConnectionThatSendsNothing` |
 

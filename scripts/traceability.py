@@ -40,6 +40,21 @@ IMPLEMENTATION_DIRS = ("include", "src")
 VERIFICATION_DIRS = ("tests", "fuzz")
 SOURCE_SUFFIXES = (".hpp", ".cpp", ".h", ".cc")
 
+# Some requirements are not implemented in C++ at all. "The container runs
+# unprivileged" is satisfied by the Dockerfile and the compose file, and by
+# nothing else -- annotating a source file for it would be a fiction that made
+# the matrix look complete while pointing at the wrong artefact.
+#
+# So the scan follows the requirement to wherever it actually lives, including
+# infrastructure-as-code. The alternative is a traceability matrix that silently
+# stops at the language boundary, which is exactly where deployment defects
+# tend to be.
+EXTRA_IMPLEMENTATION_FILES = (
+    "Dockerfile",
+    "deploy/docker-compose.yml",
+    "deploy/prometheus.yml",
+)
+
 REQUIREMENT_HEADING = re.compile(r"^###\s+(REQ-[A-Z]+-\d+)\s+[-—]+\s+(.+?)\s*$")
 STATEMENT_LINE = re.compile(r"^\*\*Statement:\*\*\s*(.*)$")
 ANNOTATION = re.compile(r"@(satisfies|verifies)\s+(REQ-[A-Za-z0-9-]+)")
@@ -103,6 +118,11 @@ def source_files(directories: tuple[str, ...]) -> list[Path]:
             continue
         for suffix in SOURCE_SUFFIXES:
             found.extend(sorted(base.rglob(f"*{suffix}")))
+    if directories == IMPLEMENTATION_DIRS:
+        for relative in EXTRA_IMPLEMENTATION_FILES:
+            candidate = REPO_ROOT / relative
+            if candidate.is_file():
+                found.append(candidate)
     return found
 
 

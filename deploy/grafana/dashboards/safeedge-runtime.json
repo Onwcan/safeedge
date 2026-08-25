@@ -1,0 +1,140 @@
+{
+  "title": "safeedge runtime",
+  "uid": "safeedge-runtime",
+  "tags": ["safeedge", "real-time", "safety"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Real-time scheduling",
+      "description": "Placed first and largest on purpose. When this reads DENIED, every latency panel on this dashboard is measuring the host's load rather than the runtime, and none of them should be quoted. A dashboard that showed microsecond jitter without showing this would be actively misleading.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "safeedge_realtime_scheduling_granted", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DENIED", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "GRANTED", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Safety state",
+      "description": "0 STO / 1 SelfTest / 2 Stopping / 3 SOS / 4 SLS / 5 Operational. Ordered most to least restrictive, so lower is safer.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "safeedge_safety_state", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "STO", "color": "red", "index": 0 },
+              "1": { "text": "Self test", "color": "yellow", "index": 1 },
+              "2": { "text": "Stopping", "color": "orange", "index": 2 },
+              "3": { "text": "SOS", "color": "blue", "index": 3 },
+              "4": { "text": "SLS", "color": "green", "index": 4 },
+              "5": { "text": "Operational", "color": "green", "index": 5 }
+            }}
+          ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Allocations on the RT path",
+      "description": "Any value above zero is a defect, not a warning. The runtime aborts on one in test builds and counts it in production.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "safeedge_allocation_violations_total", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Fault latched",
+      "description": "A latched fault means the machine is correctly stopped and waiting for an operator. It is not a reason to restart the container -- doing so throws away the fault information without fixing anything.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "safeedge_fault_latched", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "clear", "color": "green", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "LATCHED", "color": "red", "index": 1 } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Wakeup jitter",
+      "description": "Scheduled deadline to actual wakeup. The p99.9 line is the one that matters: a median inside budget with a tail outside it is a machine that misses deadlines occasionally, which is worse than one that misses them predictably.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        { "expr": "safeedge_wakeup_jitter_nanoseconds{quantile=\"0.5\"}", "legendFormat": "p50", "refId": "A" },
+        { "expr": "safeedge_wakeup_jitter_nanoseconds{quantile=\"0.99\"}", "legendFormat": "p99", "refId": "B" },
+        { "expr": "safeedge_wakeup_jitter_nanoseconds{quantile=\"0.999\"}", "legendFormat": "p99.9", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" }
+        }
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Callback execution time",
+      "description": "The part the runtime is actually responsible for, as distinct from the jitter above, which is largely the platform.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        { "expr": "safeedge_execution_nanoseconds{quantile=\"0.5\"}", "legendFormat": "p50", "refId": "A" },
+        { "expr": "safeedge_execution_nanoseconds{quantile=\"0.99\"}", "legendFormat": "p99", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cycle rate and deadline misses",
+      "description": "Overruns and skipped deadlines are counters, so they are shown as rates. A step in either is the signal to look at the jitter panel.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "rate(safeedge_cycles_total[1m])", "legendFormat": "cycles/s", "refId": "A" },
+        { "expr": "rate(safeedge_overruns_total[1m])", "legendFormat": "overruns/s", "refId": "B" },
+        { "expr": "rate(safeedge_skipped_cycles_total[1m])", "legendFormat": "skipped/s", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Safety telegrams",
+      "description": "Rejections are the interesting series. A single rejection latches the receiver, so a non-zero rate means something on the transport is repeatedly wrong.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "expr": "rate(safeedge_telegrams_total{result=\"accepted\"}[1m])", "legendFormat": "accepted/s", "refId": "A" },
+        { "expr": "rate(safeedge_telegrams_total{result=\"rejected\"}[1m])", "legendFormat": "rejected/s", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }
+      }
+    }
+  ]
+}

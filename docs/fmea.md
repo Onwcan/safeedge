@@ -119,3 +119,19 @@ Running the same function twice never detects a fault in that function. See
 | T-07 | Peer | Writer process dies mid-update | Counter left odd forever; an unbounded reader spins inside its own control cycle | Retry budget | Read fails and is recoverable rather than hanging | Critical | REQ-IPC-007 |
 | T-08 | Payload | A type whose all-zero state is not a valid value | Reader observing the region before the first write accepts a value the type can never produce | Caught by the torn-value test during development | Documented constraint: the zero value must be valid | High | REQ-IPC-006 |
 | T-09 | **Peer** | **A buggy or hostile peer writes anywhere in the region** | **Arbitrary corruption of runtime state; shared memory provides no isolation whatsoever** | **None at this layer** | **None. Where the peer is not trusted, the black-channel CRC and sequence number apply exactly as they do over a network** | **Critical** | REQ-SAF-001, REQ-SAF-008 |
+
+---
+
+## Edge deployment
+
+| # | Item | Failure mode | Effect | Detection | Mitigation | Severity | Requirements |
+|---|---|---|---|---|---|---|---|
+| E-01 | Container | SIGTERM ignored because the process is PID 1 and has no default disposition | Every stop takes the full grace period and ends in SIGKILL; the runtime never reaches a safe state | CI measures shutdown time | Handlers installed before anything else starts | Critical | REQ-EDGE-001 |
+| E-02 | Orchestrator | Liveness probe treats a latched safety fault as unhealthy | Container restarted, fault information discarded, machine restarted without anyone diagnosing why it stopped | — | Liveness reflects the process; readiness reflects fitness. A latched fault withdraws traffic without a restart | Critical | REQ-EDGE-002 |
+| E-03 | Operations | Dashboard shows microsecond jitter on a host that never granted real-time scheduling | Latency figures describe the host's load and are read as a property of the runtime | Scheduling status exported and shown first on the dashboard | Every latency figure is qualified by one gauge | High | REQ-EDGE-003 |
+| E-04 | Metrics | Exporter cannot read a complete snapshot | Stale values served as current | Freshness flag exported | Reported rather than hidden | Moderate | REQ-EDGE-004 |
+| E-05 | Image | Shell or package manager present in the runtime image | Userland vulnerabilities apply to a safety-adjacent runtime; an attacker who lands has tools | CI unpacks the layers and asserts exactly one file | `scratch` base, statically linked binary | High | REQ-EDGE-005 |
+| E-06 | Deployment | Container runs as root with full capabilities | A compromise or bug reaches the host | CI runs it hardened and asserts the consequences | Non-root, read-only rootfs, all capabilities dropped bar one | High | REQ-EDGE-006 |
+| E-07 | **Deployment** | **Full hardening removes CAP_SYS_NICE, so real-time scheduling is silently unavailable** | **The runtime starts, serves metrics and misses deadlines. Nothing looks broken** | **`safeedge_realtime_scheduling_granted` reads 0** | **The compose file adds SYS_NICE back deliberately and says why. The metric makes the alternative visible rather than silent** | **Critical** | REQ-EDGE-003, REQ-EDGE-006 |
+| E-08 | Endpoint | A client connects and sends nothing | Server thread blocked; metrics and health unavailable for everyone | — | Bounded read size and timeout per connection | Moderate | REQ-EDGE-007 |
+| E-09 | Device | Container consumes all memory or CPU on a shared edge device | Neighbouring applications starved | — | Explicit CPU and memory limits, bounded log rotation | High | — |

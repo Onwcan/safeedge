@@ -208,6 +208,106 @@ jobs:
         # passes, and the matrix reports coverage that does not exist.
         run: python3 scripts/traceability.py --check
 
+  container:
+    name: image builds, is small, and runs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t safeedge:ci .
+
+      - name: Enforce the image size budget
+        # A scratch image holding one static binary has no reason to grow. If it
+        # does, something has been added to the runtime stage -- a debug tool, a
+        # shell "just for now" -- and the whole argument for this base collapses
+        # quietly. Better to fail here than to discover it during an audit.
+        run: |
+          BYTES=$(docker image inspect safeedge:ci --format '{{.Size}}')
+          BUDGET=$((8 * 1024 * 1024))
+          echo "image size: $((BYTES / 1024)) KiB (budget $((BUDGET / 1024)) KiB)"
+          if [ "$BYTES" -gt "$BUDGET" ]; then
+            echo "::error::image exceeds the size budget"
+            exit 1
+          fi
+
+      - name: Assert the image contains nothing but the binary
+        # The claim this image makes is "no userland, so no userland
+        # vulnerability". That claim is worth nothing unless it is checked.
+        #
+        # Checked by unpacking the image layers, NOT by exporting a container.
+        # `docker export` includes files the *runtime* injects -- .dockerenv,
+        # /etc/hosts, /etc/resolv.conf, /dev/console -- which are not in the
+        # image at all. The first version of this step counted those and would
+        # have failed on a perfectly correct image.
+        run: |
+          mkdir -p /tmp/imgcheck && cd /tmp/imgcheck
+          docker save safeedge:ci -o img.tar
+          tar -xf img.tar
+          find . -path './blobs/*' -type f | while read -r blob; do
+            tar -tf "$blob" 2>/dev/null | grep -v '/$' || true
+          done | sort -u > contents.txt
+          echo "--- image layer contents ---"
+          cat contents.txt
+          if [ "$(cat contents.txt)" != "safeedged" ]; then
+            echo "::error::image contains more than the binary"
+            exit 1
+          fi
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: safeedge:ci
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: safeedge:ci
+          format: spdx-json
+          output-file: safeedge-sbom.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: safeedge-sbom.spdx.json
+
+      - name: Smoke test the running container
+        # Building an image proves it links. Running it proves the entrypoint
+        # works, the port is reachable, the healthcheck passes and SIGTERM is
+        # honoured -- none of which a build can tell you.
+        run: |
+          docker run -d --name smoke -p 9100:9100 \
+            --read-only --cap-drop=ALL --security-opt=no-new-privileges safeedge:ci
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9100/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:9100/healthz
+          curl -sf http://127.0.0.1:9100/readyz
+          curl -sf http://127.0.0.1:9100/metrics | head -30
+
+          echo "--- metrics must report that a fully hardened container has no RT scheduling ---"
+          curl -sf http://127.0.0.1:9100/metrics \
+            | grep -q '^safeedge_realtime_scheduling_granted 0'
+
+          echo "--- SIGTERM must be honoured well inside the grace period ---"
+          START=$(date +%s%3N)
+          docker stop smoke
+          ELAPSED=$(( $(date +%s%3N) - START ))
+          echo "docker stop took ${ELAPSED} ms"
+          if [ "$ELAPSED" -gt 5000 ]; then
+            echo "::error::container did not shut down promptly on SIGTERM"
+            exit 1
+          fi
+          docker rm smoke
+
+      - name: Validate the compose package
+        run: docker compose -f deploy/docker-compose.yml config > /dev/null
+
   benchmark:
     name: benchmark (informational)
     runs-on: ubuntu-24.04

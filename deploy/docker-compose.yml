@@ -1,0 +1,112 @@
+# safeedge application package.
+#
+# Shaped the way a Siemens Industrial Edge application is delivered: a
+# docker-compose file plus its configuration, deployed as a unit onto an edge
+# device. Kept deliberately close to that convention -- no host networking, no
+# privileged containers, explicit resource limits, everything read-only that can
+# be.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Grafana lands on :3000 (admin/admin on first login), Prometheus on :9090,
+# the runtime's own metrics on :9100.
+
+services:
+  safeedge:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: safeedge:dev
+    container_name: safeedge
+    restart: unless-stopped
+
+    # --- hardening ---------------------------------------------------------
+    # @satisfies REQ-EDGE-006
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # CAP_SYS_NICE is the one capability added back, and it is added back for a
+    # concrete reason: SCHED_FIFO is unavailable without it, and a container
+    # that drops every capability cannot do real-time scheduling at all.
+    #
+    # That tension is real and worth seeing rather than discovering later. Drop
+    # these three lines and the runtime still starts, still serves metrics, and
+    # reports safeedge_realtime_scheduling_granted 0 -- at which point every
+    # latency figure on the dashboard describes the host's load rather than this
+    # code. The metric exists so that failure is visible instead of silent.
+    # @satisfies REQ-EDGE-003
+    cap_add:
+      - SYS_NICE
+    ulimits:
+      rtprio: 99
+      memlock: -1
+
+    # --- resources ---------------------------------------------------------
+    # An edge device runs several applications on modest hardware. An
+    # unconstrained container is one memory leak away from taking its
+    # neighbours down with it.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 128M
+        reservations:
+          memory: 32M
+
+    environment:
+      SAFEEDGE_FREQUENCY_HZ: "1000"
+      SAFEEDGE_METRICS_PORT: "9100"
+      SAFEEDGE_RT_PRIORITY: "80"
+
+    ports:
+      - "9100:9100"
+
+    # Bounded, because a container's logs are otherwise a slow disk-full
+    # incident on a device nobody is watching.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: safeedge-prometheus
+    restart: unless-stopped
+    depends_on:
+      - safeedge
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    security_opt:
+      - no-new-privileges:true
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: safeedge-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  prometheus-data:
+  grafana-data:

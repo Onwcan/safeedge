@@ -323,3 +323,55 @@ instructions, without locks, allocation or waiting for any reader.
 
 **Statement:** Successive values accepted by a reader shall never move backwards
 through the publication sequence.
+
+---
+
+## Edge deployment
+
+### REQ-EDGE-001 — Shutdown is graceful and prompt
+
+**Statement:** On receiving SIGTERM the runtime shall stop the control loop and
+exit cleanly, well within a container orchestrator's default grace period.
+
+### REQ-EDGE-002 — The service reports liveness and readiness separately
+
+**Statement:** The runtime shall expose a liveness endpoint reflecting whether
+the process is functioning, and a readiness endpoint reflecting whether it is
+fit to be used, so that a latched safety fault withdraws traffic without
+triggering a restart.
+
+### REQ-EDGE-003 — Real-time scheduling status is exported
+
+**Statement:** The metrics endpoint shall report whether the runtime obtained
+the real-time scheduling it requested, so that latency figures gathered without
+it cannot be mistaken for a characterisation of the runtime.
+
+### REQ-EDGE-004 — A failed metrics read is reported, not hidden
+
+**Statement:** Where the exporter cannot obtain a complete snapshot, it shall
+say so rather than serve the previous values as though they were current.
+
+### REQ-EDGE-005 — The runtime image contains no userland
+
+**Statement:** The deployed image shall contain only the runtime binary, with no
+shell, package manager or system libraries.
+
+### REQ-EDGE-006 — The service runs unprivileged
+
+**Statement:** The container shall run as a non-root user with a read-only root
+filesystem, all capabilities dropped except those it demonstrably needs, and no
+ability to gain new privileges.
+
+### REQ-EDGE-007 — Endpoint requests cannot stall the service
+
+**Statement:** A client that connects and sends nothing, or sends an unbounded
+request, shall not prevent the service from answering other clients.
+
+> **REQ-EDGE-005** and **REQ-EDGE-006** are verified by the `container` job in
+> CI rather than by a unit test: both are properties of the built image and the
+> way it is run, and no in-process test can observe them. The job unpacks the
+> image layers and asserts they contain exactly one file, and runs the container
+> hardened while asserting the metrics report that real-time scheduling was
+> consequently denied. Because the traceability gate requires a `@verifies`
+> link, both carry one on the test that comes closest, and this note records
+> that the real evidence is in CI.

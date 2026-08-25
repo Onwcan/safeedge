@@ -1,0 +1,13 @@
+# Keep the build context to what the image actually needs. A context that
+# includes build trees and .git ships tens of megabytes to the daemon on every
+# build and slows the cache down for no benefit.
+build/
+.git/
+.github/
+docs/
+tests/
+benchmarks/
+fuzz/
+examples/
+scripts/
+*.md
