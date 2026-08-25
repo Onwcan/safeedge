@@ -18,11 +18,13 @@ no-allocation rule enforced rather than documented.
 |---|---|---|
 | WP-08a | `concurrent` — wait-free SPSC ring | **Done** |
 | WP-08b | `rt` — cyclic executor, latency histogram, allocation guard | **Done** |
-| WP-09 | `safety` — IEC 61800-5-2 supervisor, black-channel telegram | Next |
+| WP-09a | `safety` — black-channel telegram, CRC, fault model | **Done** |
+| WP-09b | `safety` — IEC 61800-5-2 state machine (STO/SS1/SOS/SLS) | Next |
 | WP-10 | `ipc` — zero-copy shared-memory transport | Planned |
 | WP-11 | Edge app packaging, observability | Planned |
 
-**67 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer.
+**112 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+plus a libFuzzer target on the telegram decoder.
 
 ---
 
@@ -44,6 +46,8 @@ scripts/format.sh
 
 It pins clang-format 18; a different major version formats differently and CI
 will reject the result.
+
+To see what the executor actually achieves on your machine:
 
 ```bash
 cmake --build --preset release --target rt_cycle_report
@@ -125,6 +129,48 @@ a sentence in an ADR. [ADR-0004](docs/adr/0004-enforcing-the-no-allocation-rule.
 **Known limit, stated plainly:** only `operator new` is intercepted. A direct
 `malloc` from linked-in C code passes through unseen.
 
+### `safety::SafetySender` / `safety::SafetyReceiver` — the black channel
+
+The transport is assumed to be **entirely untrustworthy** and given no safety
+responsibility at all. Every defence lives in a thin layer at each endpoint,
+which is what lets safety traffic run over ordinary, uncertified networking
+hardware. Same architecture as PROFIsafe, openSAFETY and FSoE.
+
+**PROFIsafe-inspired, not PROFIsafe.** It borrows the mechanisms because they
+are the right ones and are documented in IEC 61784-3. It is not conformant, not
+certified, and not interoperable with a real PROFIsafe device.
+
+Every fault in the IEC 61784-3 model is defended and injected by a test:
+
+| Fault | Defence |
+|---|---|
+| Corruption | CRC-32/AUTOSAR, HD=6 |
+| Unintended repetition | Consecutive number |
+| Incorrect sequence | Consecutive number |
+| Loss | Sequence gap, plus watchdog when all traffic stops |
+| Unacceptable delay | Watchdog |
+| Insertion | Source address folded into the CRC, never transmitted |
+| Masquerade | Same |
+| Addressing error | Destination address folded into the CRC |
+
+Three of those a CRC alone cannot touch, and they are the ones a home-grown
+protocol usually misses. A **replayed** telegram is byte-for-byte valid — the
+checksum is correct because the data really is what the producer sent, just not
+when it sent it. A **delayed** one is authentic and correctly ordered and simply
+describes a world that has moved on. **Masquerade and misaddressing** both look
+like perfectly good frames; the defence is that the CRC is seeded with source,
+destination and a parameter signature that are *never put on the wire*, so
+anything that does not already share them cannot produce a matching checksum.
+
+That is not cryptography — those parameters are commissioning data, not secrets.
+It defends against faults, not adversaries.
+
+Any fault **latches** a safe state and `receive()` then hands over nothing until
+acknowledged. Deliberately inconvenient: real faults are intermittent, so a
+consumer that recovered on the next good telegram would ride through a failing
+transceiver indefinitely while the machine ran on data that was only sometimes
+trustworthy. [ADR-0005](docs/adr/0005-black-channel-fault-model.md).
+
 ### `rt::LatencyHistogram`
 
 Fixed-size, allocation-free, logarithmic bucketing at constant ~3.1% relative
@@ -150,6 +196,19 @@ Median of 7 repetitions, CPU pinning verified.
 algorithm and the same memory ordering; the only difference is cache-line
 layout. That is the entire performance argument for the class, so it is measured
 against a control implementation in the same binary rather than asserted.
+
+### CRC error detection
+
+Verified rather than asserted: **exhaustive** detection of every single-bit and
+every double-bit error in a 32-byte message, heavy sampling at three, four and
+five bits, and every burst up to 32 bits. The standard check vector
+(`0x1697D06A` for `"123456789"`) is asserted so the implementation is
+identifiably CRC-32/AUTOSAR and not something that merely resembles it.
+
+The classic CRC-32 polynomial used by Ethernet and zip drops to HD=4 above 91
+bits — four flips can produce a valid checksum. `0xF4ACFB13` holds **HD=6 up to
+2048 bits**. For a checksum whose failure mode is "the machine acts on corrupted
+motion data", two extra guaranteed bits is not marginal.
 
 ### Cyclic executor at 1 kHz
 

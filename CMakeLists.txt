@@ -14,6 +14,7 @@ endif()
 option(SAFEEDGE_BUILD_TESTS      "Build unit tests"         ${SAFEEDGE_IS_TOP_LEVEL})
 option(SAFEEDGE_BUILD_BENCHMARKS "Build latency benchmarks" ${SAFEEDGE_IS_TOP_LEVEL})
 option(SAFEEDGE_ENABLE_WERROR    "Treat warnings as errors" ON)
+option(SAFEEDGE_BUILD_FUZZERS    "Build libFuzzer targets (Clang only)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -114,6 +115,24 @@ set_target_properties(safeedge_rt_alloc_guard PROPERTIES
   OUTPUT_NAME safeedge-rt-alloc-guard
   EXPORT_NAME rt_alloc_guard)
 
+# safety -- the failsafe layer: black-channel telegram and the supervisor that
+# acts on it. Kept a separate component so it can be reviewed, and eventually
+# argued for, in isolation from the transport and executor code around it.
+add_library(safeedge_safety
+  src/safety/crc32.cpp
+  src/safety/black_channel.cpp)
+add_library(safeedge::safety ALIAS safeedge_safety)
+target_include_directories(safeedge_safety
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(safeedge_safety PRIVATE safeedge::warnings)
+set_target_properties(safeedge_safety PROPERTIES
+  OUTPUT_NAME safeedge-safety
+  EXPORT_NAME safety
+  VERSION   ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR})
+
 if(SAFEEDGE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
@@ -127,10 +146,15 @@ if(SAFEEDGE_IS_TOP_LEVEL)
   add_subdirectory(examples)
 endif()
 
+if(SAFEEDGE_BUILD_FUZZERS)
+  add_subdirectory(fuzz)
+endif()
+
 # ---------------------------------------------------------------------------
 # Install / export
 # ---------------------------------------------------------------------------
-install(TARGETS safeedge_concurrent safeedge_rt safeedge_rt_alloc_guard safeedge_warnings
+install(TARGETS safeedge_concurrent safeedge_rt safeedge_rt_alloc_guard
+                safeedge_safety safeedge_warnings
         EXPORT safeedgeTargets
         LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}

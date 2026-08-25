@@ -40,3 +40,16 @@ target_link_libraries(safeedge_rt_tests PRIVATE
 gtest_discover_tests(safeedge_rt_tests
   PROPERTIES LABELS unit TIMEOUT 300
   DISCOVERY_TIMEOUT 60)
+
+add_executable(safeedge_safety_tests
+  test_crc32.cpp
+  test_black_channel.cpp)
+target_link_libraries(safeedge_safety_tests PRIVATE
+  safeedge::safety
+  safeedge::rt
+  safeedge::warnings
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>"
+  GTest::gtest_main)
+gtest_discover_tests(safeedge_safety_tests
+  PROPERTIES LABELS unit TIMEOUT 300
+  DISCOVERY_TIMEOUT 60)

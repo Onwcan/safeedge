@@ -166,6 +166,33 @@ jobs:
           cmake --build /tmp/consumer/build
           /tmp/consumer/build/consumer
 
+  fuzz:
+    name: fuzz the telegram decoder
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang-18
+      - name: Build fuzzer
+        env: { CC: clang-18, CXX: clang++-18 }
+        run: |
+          cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo                 -DSAFEEDGE_BUILD_FUZZERS=ON -DSAFEEDGE_BUILD_TESTS=OFF                 -DSAFEEDGE_BUILD_BENCHMARKS=OFF
+          cmake --build build-fuzz -j "$(nproc)"
+      - name: Fuzz
+        # The decoder is the only place in this runtime that parses bytes it did
+        # not produce, from a transport assumed to be untrustworthy. Sixty
+        # seconds per push will not find everything, but it re-runs the seed
+        # corpus every time, so a regression that breaks a known-good frame
+        # fails immediately.
+        run: |
+          ./build-fuzz/fuzz/fuzz_telegram_decode             -max_total_time=60 -print_final_stats=1 fuzz/corpus
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: crash-*
+
   benchmark:
     name: benchmark (informational)
     runs-on: ubuntu-24.04
