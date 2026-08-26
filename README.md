@@ -532,5 +532,4 @@ is in this README rather than only in the author's head.
 
 ## Licence
 
-Apache-2.0. Portfolio work — every design decision here is one I can defend in
-review.
+Apache-2.0. 
