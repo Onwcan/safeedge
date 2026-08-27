@@ -8,9 +8,9 @@ annotations in the source, and CI fails if any requirement has no
 implementation link, no verification link, or if an annotation names a
 requirement that does not exist.
 
-- Requirements: **63**
-- With an implementation link: **63/63**
-- With a verification link: **63/63**
+- Requirements: **65**
+- With an implementation link: **65/65**
+- With a verification link: **65/65**
 
 This is not a safety case. See `docs/safety-requirements.md`.
 
@@ -79,4 +79,6 @@ This is not a safety case. See `docs/safety-requirements.md`.
 | **REQ-EDGE-005** | The runtime image contains no userland | `Dockerfile` | `HttpServer.ServesARegisteredRoute` |
 | **REQ-EDGE-006** | The service runs unprivileged | `Dockerfile`<br>`deploy/docker-compose.yml` | `HttpServer.ServesARegisteredRoute` |
 | **REQ-EDGE-007** | Endpoint requests cannot stall the service | `src/edge/http_server.cpp` | `HttpServer.NonGetMethodsAreRejected`<br>`HttpServer.SurvivesAConnectionThatSendsNothing` |
+| **REQ-EDGE-008** | Safety transitions carry the instant they occurred | `include/safeedge/edge/runtime_snapshot.hpp` | `Metrics.RenderingIsSafeAgainstAConcurrentPublisher`<br>`Metrics.SafetyTransitionIsExportedAsAnAgeNotAsARawTimestamp` |
+| **REQ-EDGE-009** | An emergency stop can be asserted from outside the process | `include/safeedge/edge/runtime_snapshot.hpp` | `SafetyStateMachine.FaultLatchesWhileTheCauseIsStillPresent` |
 

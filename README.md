@@ -24,11 +24,13 @@ no-allocation rule enforced rather than documented.
 | WP-10 | `ipc` — zero-copy shared-memory transport | **Done** |
 | WP-11 | `edge` — container packaging, metrics, dashboard | **Done** |
 
-**208 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+| WP-11b | External emergency stop, acknowledgement, timestamped safety signal | **Done** |
+
+**210 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
 plus a libFuzzer target on the telegram decoder. The shared-memory tests
 genuinely `fork()` rather than simulating a second process with a thread.
 
-**63 requirements**, every one linked to implementing code and verifying tests,
+**65 requirements**, every one linked to implementing code and verifying tests,
 with a CI gate that fails on a broken link.
 
 ---
@@ -40,6 +42,66 @@ docker compose -f deploy/docker-compose.yml up -d
 ```
 
 Grafana on `:3000`, Prometheus on `:9090`, the runtime's metrics on `:9100`.
+
+### Stop it, and start it again
+
+```bash
+docker compose exec safeedge touch /tmp/safeedge-estop
+```
+
+Torque is withheld. Now remove the request:
+
+```bash
+docker compose exec safeedge rm /tmp/safeedge-estop
+```
+
+**Nothing restarts.** That is not an oversight. IEC 60204-1 requires that
+restoring an emergency stop device must not by itself restart a machine, so
+coming back needs a second, deliberate act:
+
+```bash
+docker compose exec safeedge touch /tmp/safeedge-ack
+```
+
+The two inputs behave differently on purpose. The stop is level-triggered,
+because it is a *condition*. The acknowledgement is one-shot and consumed on
+read, because an acknowledgement left asserted would clear the latch again on
+the next cycle — and a fault that cannot stay latched is not latched.
+
+Neither is polled from the control loop. A `stat()` is cheap until the
+filesystem decides otherwise — an NFS mount, a full disk, a container layer
+under pressure — and a control loop whose period depends on the filesystem is
+not a control loop. A watcher thread publishes to an atomic the loop reads for
+free.
+
+### The endpoint that makes a stop measurable
+
+```bash
+curl -s localhost:9100/safety
+# 2 0 472652975507
+```
+
+Sequence, torque permitted, and **the monotonic instant the runtime entered this
+state**.
+
+That last field exists because the `pickcell` integration proved it was missing.
+`/readyz` answers "should traffic come here" and carries no time, so a consumer
+polling it can only stamp its own observation — and the reaction time it computes
+comes out near zero, which does not mean the link is fast, it means there is
+nothing to measure. **A signal that cannot be timed cannot be held to a
+deadline.**
+
+With it, the whole column can be measured end to end. safeedge decides, the cell
+stops, and the interval between them is a real number: min 5.7 ms, median
+48.7 ms, max 80.7 ms across a 100 ms poll — none of which is a property of this
+runtime, which decides in about a millisecond. The interval is the link.
+
+The instant is `CLOCK_MONOTONIC`, which shares an epoch across processes on a
+machine, and it is served as text rather than as a Prometheus gauge on purpose:
+a nanosecond monotonic value is around 1e18, and a gauge rendered to six
+significant digits would be wrong by hundreds of millions of nanoseconds.
+`/metrics` carries the *age* instead, which is a small number and renders
+exactly.
 
 ## Build
 

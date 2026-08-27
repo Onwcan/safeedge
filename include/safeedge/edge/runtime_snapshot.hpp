@@ -49,6 +49,47 @@ struct RuntimeSnapshot {
   std::uint32_t torque_permitted{0};
   std::uint32_t fault_latched{0};
 
+  /// When the runtime entered its current safety state, on the same monotonic
+  /// clock as `uptime_ns`, and a counter that increments on every transition.
+  ///
+  /// These exist because a consumer cannot be held to a deadline against a
+  /// signal it cannot time. `/readyz` answers "may I send you traffic" and
+  /// carries no instant, so a cell polling it can only stamp its own
+  /// observation -- and the reaction time it computes comes out near zero,
+  /// which does not mean the link is fast, it means there is nothing to
+  /// measure. The pickcell integration demonstrated exactly that and could not
+  /// report an end-to-end figure until these were added.
+  ///
+  /// A sequence number as well as a timestamp: a consumer needs to distinguish
+  /// "the same decision, reported again" from "a new decision", and two
+  /// transitions can share a timestamp at this resolution.
+  ///
+  /// Raw CLOCK_MONOTONIC, so it is directly comparable with a timestamp taken
+  /// in another process on this machine -- monotonic time shares an epoch
+  /// (boot) across processes, which is what makes a cross-process reaction time
+  /// measurable at all. Served by /safety, not by /metrics: see below.
+  // @satisfies REQ-EDGE-008
+  std::uint64_t safety_transition_monotonic_ns{0};
+  // @satisfies REQ-EDGE-008
+  std::uint64_t safety_sequence{0};
+
+  /// How long the runtime has been in its current safety state.
+  ///
+  /// Carried separately from the timestamp above because a Prometheus gauge is
+  /// a double rendered with six significant digits. A nanosecond CLOCK_MONOTONIC
+  /// value is around 1e18 and survives neither -- it would export as something
+  /// like 1.23457e+18, which is not a timestamp, it is a rumour about one. An
+  /// age is a small number and renders exactly.
+  std::uint64_t safety_state_age_ns{0};
+
+  /// 1 when an external emergency stop is currently demanding a stop.
+  ///
+  /// Exported separately from `safety_state` because the cause and the response
+  /// are different facts. A machine in SS1 because someone pressed the button
+  /// and a machine in SS1 because a channel disagreed need different people.
+  // @satisfies REQ-EDGE-009
+  std::uint32_t estop_asserted{0};
+
   /// Safety telegrams accepted and rejected since start.
   std::uint64_t telegrams_accepted{0};
   std::uint64_t telegrams_rejected{0};

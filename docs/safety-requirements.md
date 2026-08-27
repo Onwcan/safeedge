@@ -367,6 +367,42 @@ ability to gain new privileges.
 **Statement:** A client that connects and sends nothing, or sends an unbounded
 request, shall not prevent the service from answering other clients.
 
+### REQ-EDGE-008 — Safety transitions carry the instant they occurred
+
+**Statement:** The runtime shall publish the monotonic instant at which it
+entered its current safety state, together with a sequence number that
+increments on every transition, so that a consumer can measure how long it took
+to react and can distinguish a repeated report from a new decision.
+
+**Rationale:** A readiness probe answers whether traffic should be sent; it
+carries no time. A consumer polling one can only stamp its own observation, so
+any interval it computes is zero by construction — which reads as a fast link
+and is in fact an unmeasurable one. This was found by the `pickcell`
+integration, which could not report an end-to-end stop time until this existed.
+**A signal that cannot be timed cannot be held to a deadline.**
+
+The instant is CLOCK_MONOTONIC, which shares an epoch across processes on a
+machine, and is served as text rather than as a Prometheus gauge: a nanosecond
+monotonic value is around 1e18 and a gauge rendered to six significant digits
+would be wrong by hundreds of millions of nanoseconds.
+
+### REQ-EDGE-009 — An emergency stop can be asserted from outside the process
+
+**Statement:** The runtime shall accept an emergency-stop request from outside
+itself, and shall not restart on the removal of that request. Restoring motion
+shall require a separate, explicit acknowledgement.
+
+**Rationale:** IEC 60204-1 requires that restoring an emergency stop device must
+not by itself restart the machine. The two inputs therefore behave differently
+on purpose: the stop is level-triggered, because it is a condition; the
+acknowledgement is one-shot and consumed on read, because an acknowledgement
+left asserted would clear the latch again on the following cycle, and a fault
+that cannot stay latched is not latched.
+
+**Note:** This input is a demonstration path. A real emergency stop is a
+dual-channel hardware circuit that removes power without asking software's
+permission, and nothing in this process substitutes for one.
+
 > **REQ-EDGE-005** and **REQ-EDGE-006** are verified by the `container` job in
 > CI rather than by a unit test: both are properties of the built image and the
 > way it is run, and no in-process test can observe them. The job unpacks the

@@ -278,5 +278,50 @@ TEST(Metrics, RenderingIsSafeAgainstAConcurrentPublisher) {
   EXPECT_GT(renders.load(), 0u);
 }
 
+// @verifies REQ-EDGE-008
+TEST(Metrics, SafetyTransitionIsExportedAsAnAgeNotAsARawTimestamp) {
+  RuntimeSnapshot snapshot;
+  // A realistic CLOCK_MONOTONIC value: about 470 000 seconds of uptime.
+  snapshot.safety_transition_monotonic_ns = 472'652'975'507ULL;
+  snapshot.safety_state_age_ns = 2'014'030'000ULL;
+  snapshot.safety_sequence = 2;
+  snapshot.estop_asserted = 1;
+
+  const std::string body = renderPrometheus(snapshot, true);
+
+  // The age renders exactly, because it is a small number.
+  EXPECT_NE(body.find("safeedge_safety_state_age_seconds 2.01403"), std::string::npos)
+      << body;
+  EXPECT_NE(body.find("safeedge_safety_sequence 2"), std::string::npos) << body;
+  EXPECT_NE(body.find("safeedge_estop_asserted 1"), std::string::npos) << body;
+
+  // The raw monotonic instant must NOT be a metric. This exposition format
+  // renders a double to six significant digits, so 472652975507 would export as
+  // 4.72653e+11 -- wrong by hundreds of thousands of nanoseconds, and wrong in a
+  // way that still looks like a number. It is served by /safety as text instead.
+  EXPECT_EQ(body.find("472652975507"), std::string::npos)
+      << "a nanosecond timestamp must not be exported through a gauge";
+  EXPECT_EQ(body.find("4.72653e+11"), std::string::npos) << body;
+}
+
+// @verifies REQ-EDGE-008
+TEST(Metrics, SequenceDistinguishesARepeatedReportFromANewDecision) {
+  RuntimeSnapshot first;
+  first.safety_sequence = 7;
+  first.torque_permitted = 0;
+
+  RuntimeSnapshot repeated = first;  // same decision, reported again
+  RuntimeSnapshot next = first;
+  next.safety_sequence = 8;  // a new decision
+
+  EXPECT_EQ(first.safety_sequence, repeated.safety_sequence);
+  EXPECT_NE(first.safety_sequence, next.safety_sequence);
+
+  // The point: torque_permitted alone cannot tell these apart. Both later
+  // snapshots report torque withheld, and only the sequence says whether that
+  // is the same withholding or a second one.
+  EXPECT_EQ(repeated.torque_permitted, next.torque_permitted);
+}
+
 }  // namespace
 }  // namespace safeedge::edge

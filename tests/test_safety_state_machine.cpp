@@ -282,6 +282,7 @@ TEST(SafetyStateMachine, FaultLatchesWhileTheCauseIsStillPresent) {
   }
 }
 
+// @verifies REQ-EDGE-009
 TEST(SafetyStateMachine, AcknowledgementClearsTheFaultButDoesNotRestartMotion) {
   // @verifies REQ-SAF-035
   // The distinction that matters most in this file. An acknowledgement button

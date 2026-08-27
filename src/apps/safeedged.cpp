@@ -77,6 +77,20 @@ void logEvent(const char* level, const char* message, const char* detail = nullp
   std::fflush(stdout);
 }
 
+/// CLOCK_MONOTONIC in nanoseconds.
+///
+/// Monotonic time shares an epoch across every process on the machine (boot),
+/// which is what lets a consumer in another process subtract our transition
+/// stamp from its own observation and get a real interval. A wall clock would
+/// not do: it steps, and a stepped clock produces negative intervals and
+/// impossible velocities exactly once, at the worst moment.
+std::uint64_t monotonicNanos() noexcept {
+  timespec ts{};
+  ::clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<std::uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+         static_cast<std::uint64_t>(ts.tv_nsec);
+}
+
 long environmentLong(const char* name, long fallback) {
   const char* raw = std::getenv(name);
   if (raw == nullptr || *raw == '\0') {
@@ -134,6 +148,97 @@ int runHealthcheck(std::uint16_t port) {
   }
   return std::strstr(response.data(), " 200 ") != nullptr ? 0 : 1;
 }
+
+/// Watches a file whose existence means "emergency stop asserted".
+///
+/// Deliberately NOT checked from the control loop. A stat() is cheap, but it is
+/// still a syscall on a path the filesystem may decide to make slow -- an NFS
+/// mount, a full disk, a container layer under pressure -- and a control loop
+/// whose period depends on the filesystem is not a control loop. The watcher
+/// runs on its own thread and publishes to an atomic the loop reads for free.
+///
+/// A file rather than an HTTP verb because it needs no new surface, works with
+/// `docker exec ... touch /tmp/estop`, and survives the metrics server being
+/// wedged -- which is exactly when someone wants to stop the machine.
+///
+/// This is a demonstration input. A real emergency stop is a dual-channel
+/// hardware circuit that removes power without asking software's permission;
+/// nothing in this process is a substitute for one, and the supervisor treats
+/// this input as a request, not as the stop itself.
+class FileFlagWatcher {
+ public:
+  enum class Mode {
+    /// Presence of the file IS the state. Removing it clears the input.
+    /// Used for the emergency stop, which is a condition, not an event.
+    kLevel,
+    /// Appearance of the file is a one-shot event. The file is removed once
+    /// seen, and the flag is delivered exactly once.
+    ///
+    /// Acknowledgement has to work this way. A level-triggered acknowledge file
+    /// left in place would re-acknowledge every cycle, so a fault could never
+    /// stay latched -- which defeats the entire point of latching it.
+    kLatchOnce,
+  };
+
+  FileFlagWatcher(std::string path, std::chrono::milliseconds period, Mode mode,
+                  const char* asserted_message, const char* cleared_message)
+      : path_(std::move(path)),
+        period_(period),
+        mode_(mode),
+        asserted_message_(asserted_message),
+        cleared_message_(cleared_message) {
+    thread_ = std::thread([this] { run(); });
+  }
+
+  ~FileFlagWatcher() {
+    running_.store(false, std::memory_order_relaxed);
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+
+  FileFlagWatcher(const FileFlagWatcher&) = delete;
+  FileFlagWatcher& operator=(const FileFlagWatcher&) = delete;
+  FileFlagWatcher(FileFlagWatcher&&) = delete;
+  FileFlagWatcher& operator=(FileFlagWatcher&&) = delete;
+
+  /// Level mode: the current state.
+  bool asserted() const noexcept { return asserted_.load(std::memory_order_relaxed); }
+
+  /// Latch mode: true once per appearance, and false thereafter.
+  bool takeOnce() noexcept {
+    return asserted_.exchange(false, std::memory_order_acq_rel);
+  }
+
+ private:
+  void run() {
+    while (running_.load(std::memory_order_relaxed)) {
+      const bool present = ::access(path_.c_str(), F_OK) == 0;
+      if (mode_ == Mode::kLatchOnce) {
+        if (present) {
+          // Remove it before setting the flag, so a second appearance cannot be
+          // lost between the loop reading the flag and the file being cleared.
+          ::unlink(path_.c_str());
+          asserted_.store(true, std::memory_order_release);
+          logEvent("info", asserted_message_, path_.c_str());
+        }
+      } else if (present != asserted_.load(std::memory_order_relaxed)) {
+        asserted_.store(present, std::memory_order_relaxed);
+        logEvent("warn", present ? asserted_message_ : cleared_message_, path_.c_str());
+      }
+      std::this_thread::sleep_for(period_);
+    }
+  }
+
+  std::string path_;
+  std::chrono::milliseconds period_;
+  Mode mode_;
+  const char* asserted_message_;
+  const char* cleared_message_;
+  std::atomic<bool> asserted_{false};
+  std::atomic<bool> running_{true};
+  std::thread thread_;
+};
 
 }  // namespace
 
@@ -218,6 +323,38 @@ int main(int argc, char** argv) {
     return response;
   });
 
+  // The endpoint that makes a reaction time measurable.
+  //
+  // Three integers, space separated: sequence, torque_permitted, and the
+  // monotonic instant of the transition. Deliberately not JSON -- a consumer
+  // parsing this sits in or beside a control loop, and the format should cost
+  // it a sscanf rather than a parser.
+  //
+  // /readyz cannot serve this purpose. It answers "should traffic come here",
+  // it carries no instant, and a consumer polling it can only ever stamp its
+  // own observation. The pickcell integration could not report an end-to-end
+  // number until this route existed.
+  server.route("/safety", [&published]() -> edge::HttpResponse {
+    edge::RuntimeSnapshot snapshot;
+    edge::HttpResponse response;
+    response.content_type = "text/plain";
+    if (!published.tryLoad(snapshot)) {
+      // No snapshot is not a report of safety. 503 and no numbers: a consumer
+      // must not be able to parse a permissive answer out of a failed read.
+      response.status = 503;
+      response.body = "snapshot unavailable\n";
+      return response;
+    }
+    char line[128];
+    std::snprintf(
+        line, sizeof(line), "%llu %u %llu\n",
+        static_cast<unsigned long long>(snapshot.safety_sequence),
+        static_cast<unsigned>(snapshot.torque_permitted),
+        static_cast<unsigned long long>(snapshot.safety_transition_monotonic_ns));
+    response.body = line;
+    return response;
+  });
+
   server.route("/metrics", [&published]() -> edge::HttpResponse {
     edge::RuntimeSnapshot snapshot;
     const bool fresh = published.tryLoad(snapshot);
@@ -232,6 +369,33 @@ int main(int argc, char** argv) {
     return 3;
   }
   logEvent("info", "metrics server listening");
+
+  // --- emergency stop input ------------------------------------------------
+  const char* estop_path_raw = std::getenv("SAFEEDGE_ESTOP_FILE");
+  const std::string estop_path = (estop_path_raw != nullptr && *estop_path_raw != '\0')
+                                     ? estop_path_raw
+                                     : "/tmp/safeedge-estop";
+  FileFlagWatcher estop(estop_path, std::chrono::milliseconds(10),
+                        FileFlagWatcher::Mode::kLevel, "emergency stop asserted",
+                        "emergency stop cleared");
+  logEvent("info", "emergency stop file watched", estop_path.c_str());
+
+  // Clearing the emergency stop does NOT restart the machine, and that is not a
+  // convenience to be smoothed away: IEC 60204-1 requires that restoring an
+  // emergency stop device must not by itself restart anything. Coming back
+  // needs a separate, deliberate acknowledgement -- a second person-shaped act.
+  //
+  // One-shot, because an acknowledge that stayed asserted would clear the latch
+  // again on the next cycle, and a fault that cannot stay latched is not
+  // latched.
+  const char* ack_path_raw = std::getenv("SAFEEDGE_ACK_FILE");
+  const std::string ack_path = (ack_path_raw != nullptr && *ack_path_raw != '\0')
+                                   ? ack_path_raw
+                                   : "/tmp/safeedge-ack";
+  FileFlagWatcher acknowledge(ack_path, std::chrono::milliseconds(10),
+                              FileFlagWatcher::Mode::kLatchOnce,
+                              "fault acknowledgement received", "");
+  logEvent("info", "acknowledge file watched", ack_path.c_str());
 
   // --- control loop --------------------------------------------------------
   std::thread control([&] {
@@ -261,6 +425,11 @@ int main(int argc, char** argv) {
     std::uint64_t accepted = 0;
     std::uint64_t rejected = 0;
 
+    auto last_safety_state = safety::SafetyState::kSafeTorqueOff;
+    bool last_torque_permitted = false;
+    std::uint64_t last_transition_ns = monotonicNanos();
+    std::uint64_t safety_sequence = 0;
+
     auto cycle = [&](const rt::CycleContext& context) {
       const std::int64_t now_ns =
           context.period_ns * static_cast<std::int64_t>(context.index);
@@ -280,7 +449,8 @@ int main(int argc, char** argv) {
       }
 
       safety::SafetyInputs inputs;
-      inputs.emergency_stop_asserted = false;
+      inputs.emergency_stop_asserted = estop.asserted();
+      inputs.acknowledge = acknowledge.takeOnce();
       inputs.communication_ok = !receiver.inSafeState();
       inputs.heartbeat_ok = true;
       inputs.self_test_passed = true;
@@ -289,6 +459,18 @@ int main(int argc, char** argv) {
       inputs.timestamp_ns = now_ns;
 
       const safety::SafetyOutputs outputs = supervisor.evaluate(inputs, inputs, now_ns);
+
+      // A transition is what a consumer needs to react to, so it gets a stamp
+      // and a sequence number. Both are read by pickcell to compute how long the
+      // cell took to stop after this instant -- a figure that was not computable
+      // before these existed, because /readyz carries no time.
+      if (outputs.state != last_safety_state ||
+          outputs.torque_permitted != last_torque_permitted) {
+        last_safety_state = outputs.state;
+        last_torque_permitted = outputs.torque_permitted;
+        last_transition_ns = monotonicNanos();
+        ++safety_sequence;
+      }
 
       // Publish. Wait-free, so the loop never waits on a scrape.
       edge::RuntimeSnapshot snapshot;
@@ -308,6 +490,10 @@ int main(int argc, char** argv) {
       snapshot.fault_reason = static_cast<std::uint32_t>(outputs.fault);
       snapshot.torque_permitted = outputs.torque_permitted ? 1U : 0U;
       snapshot.fault_latched = outputs.fault_latched ? 1U : 0U;
+      snapshot.safety_transition_monotonic_ns = last_transition_ns;
+      snapshot.safety_sequence = safety_sequence;
+      snapshot.safety_state_age_ns = monotonicNanos() - last_transition_ns;
+      snapshot.estop_asserted = estop.asserted() ? 1U : 0U;
       snapshot.telegrams_accepted = accepted;
       snapshot.telegrams_rejected = rejected;
       snapshot.realtime_scheduling_granted = thread_report.scheduling_applied ? 1U : 0U;

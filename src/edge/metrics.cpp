@@ -114,6 +114,22 @@ std::string renderPrometheus(const RuntimeSnapshot& snapshot, bool snapshot_is_f
   appendMetric(out, "safeedge_fault_latched",
                "1 while a fault is latched and awaiting acknowledgement", "gauge",
                snapshot.fault_latched);
+  appendMetric(out, "safeedge_estop_asserted",
+               "1 when an external emergency stop is demanding a stop", "gauge",
+               snapshot.estop_asserted);
+  appendMetric(out, "safeedge_safety_sequence",
+               "Increments on every safety state transition; lets a consumer tell a "
+               "repeated report from a new decision",
+               "counter", static_cast<double>(snapshot.safety_sequence));
+  // The transition *instant* is deliberately not a metric. It is a nanosecond
+  // CLOCK_MONOTONIC value near 1e18, and this exposition format renders a
+  // double with six significant digits -- the exported number would be wrong by
+  // hundreds of millions of nanoseconds. The exact value is served by /safety,
+  // as text, for consumers that need to compute against it. What belongs on a
+  // dashboard is the age.
+  appendMetric(out, "safeedge_safety_state_age_seconds",
+               "How long the runtime has been in its current safety state", "gauge",
+               static_cast<double>(snapshot.safety_state_age_ns) / 1e9);
 
   appendLabelled(out, "safeedge_telegrams_total", "Safety telegrams processed", "counter",
                  "result", "accepted", static_cast<double>(snapshot.telegrams_accepted));
