@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <string>
 #include <thread>
 
@@ -38,6 +39,7 @@
 #include "safeedge/edge/metrics.hpp"
 #include "safeedge/edge/runtime_snapshot.hpp"
 #include "safeedge/ipc/seqlock_slot.hpp"
+#include "safeedge/ipc/shared_memory.hpp"
 #include "safeedge/rt/cyclic_executor.hpp"
 #include "safeedge/rt/no_alloc_guard.hpp"
 #include "safeedge/safety/black_channel.hpp"
@@ -285,8 +287,41 @@ int main(int argc, char** argv) {
 
   const safety::SafetyAddress address{0x0011, 0x2200, 0xDEADBEEF};
 
-  ipc::SeqlockSlot<edge::RuntimeSnapshot> published;
-  published.store(edge::RuntimeSnapshot{});
+  // The published snapshot, optionally in shared memory so another process can
+  // read it without going through HTTP.
+  //
+  // Same slot either way, so there is one publish rather than two -- the HTTP
+  // handlers in this process and a reader in another are looking at the same
+  // bytes. A second publish path would be a second thing to forget to update,
+  // and the two would disagree the first time somebody added a field.
+  //
+  // This is what the ipc component was built for, and it is the first time it
+  // carries a real payload across a real process boundary rather than a test's.
+  using SnapshotSlot = ipc::SeqlockSlot<edge::RuntimeSnapshot>;
+  SnapshotSlot local_slot;
+  ipc::SharedMemoryRegion snapshot_region;
+  SnapshotSlot* published = &local_slot;
+
+  const char* snapshot_shm_raw = std::getenv("SAFEEDGE_SNAPSHOT_SHM");
+  if (snapshot_shm_raw != nullptr && *snapshot_shm_raw != '\0') {
+    // A region left by a previous instance holds that instance's last state.
+    // Adopting it would mean serving a dead runtime's numbers as though they
+    // were current, so it is removed rather than reused.
+    ipc::SharedMemoryRegion::unlinkName(snapshot_shm_raw);
+    snapshot_region =
+        ipc::SharedMemoryRegion::create(snapshot_shm_raw, sizeof(SnapshotSlot));
+    if (snapshot_region.valid()) {
+      published = new (snapshot_region.data()) SnapshotSlot();
+      logEvent("info", "publishing snapshot to shared memory", snapshot_shm_raw);
+    } else {
+      // Reported, not swallowed. A reader waiting on this region would otherwise
+      // wait forever with nothing saying why.
+      logEvent("warn", "could not create snapshot shared memory; HTTP only",
+               snapshot_shm_raw);
+    }
+  }
+
+  published->store(edge::RuntimeSnapshot{});
 
   std::atomic<bool> loop_running{false};
 
@@ -304,12 +339,12 @@ int main(int argc, char** argv) {
     return response;
   });
 
-  server.route("/readyz", [&published]() -> edge::HttpResponse {
+  server.route("/readyz", [published]() -> edge::HttpResponse {
     // Readiness: should traffic be sent here. A latched fault means no, so the
     // orchestrator stops routing to it -- without killing it.
     edge::RuntimeSnapshot snapshot;
     edge::HttpResponse response;
-    if (!published.tryLoad(snapshot)) {
+    if (!published->tryLoad(snapshot)) {
       response.status = 503;
       response.body = "snapshot unavailable\n";
       return response;
@@ -334,11 +369,11 @@ int main(int argc, char** argv) {
   // it carries no instant, and a consumer polling it can only ever stamp its
   // own observation. The pickcell integration could not report an end-to-end
   // number until this route existed.
-  server.route("/safety", [&published]() -> edge::HttpResponse {
+  server.route("/safety", [published]() -> edge::HttpResponse {
     edge::RuntimeSnapshot snapshot;
     edge::HttpResponse response;
     response.content_type = "text/plain";
-    if (!published.tryLoad(snapshot)) {
+    if (!published->tryLoad(snapshot)) {
       // No snapshot is not a report of safety. 503 and no numbers: a consumer
       // must not be able to parse a permissive answer out of a failed read.
       response.status = 503;
@@ -355,9 +390,9 @@ int main(int argc, char** argv) {
     return response;
   });
 
-  server.route("/metrics", [&published]() -> edge::HttpResponse {
+  server.route("/metrics", [published]() -> edge::HttpResponse {
     edge::RuntimeSnapshot snapshot;
-    const bool fresh = published.tryLoad(snapshot);
+    const bool fresh = published->tryLoad(snapshot);
     edge::HttpResponse response;
     response.content_type = "text/plain; version=0.0.4; charset=utf-8";
     response.body = edge::renderPrometheus(snapshot, fresh);
@@ -500,7 +535,7 @@ int main(int argc, char** argv) {
       snapshot.uptime_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                std::chrono::steady_clock::now() - started)
                                .count();
-      published.store(snapshot);
+      published->store(snapshot);
 
       if (g_shutdown_requested != 0) {
         executor.requestStop();
@@ -522,7 +557,7 @@ int main(int argc, char** argv) {
   server.stop();
 
   edge::RuntimeSnapshot final_snapshot;
-  if (published.tryLoad(final_snapshot)) {
+  if (published->tryLoad(final_snapshot)) {
     char detail[256];
     std::snprintf(detail, sizeof(detail),
                   "cycles=%" PRIu64 " overruns=%" PRIu64 " allocations=%" PRIu64,

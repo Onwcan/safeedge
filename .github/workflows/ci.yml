@@ -101,6 +101,56 @@ jobs:
           find src -name '*.cpp' 
             | xargs clang-tidy-18 -p build --warnings-as-errors='*'
 
+  # Its own job, because it is its own decision.
+  #
+  # open62541 is a couple of minutes of build that the other jobs should not pay
+  # for, and keeping it separate makes the claim checkable: if this job is the
+  # only one that touches OPC UA, then nothing the other jobs build links it --
+  # including safeedged, whose whole point is that it does not.
+  opcua:
+    name: OPC UA component
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++-14
+
+      - name: Cache the open62541 build
+        uses: actions/cache@v4
+        with:
+          path: build-opcua/_deps
+          key: open62541-v1.4.12-${{ runner.os }}-g++14
+
+      - name: Configure with the component enabled
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          cmake -S . -B build-opcua -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DSAFEEDGE_BUILD_OPCUA=ON             -DSAFEEDGE_BUILD_BENCHMARKS=OFF             -DSAFEEDGE_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build-opcua -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build-opcua --output-on-failure
+
+      # The structural claim, checked rather than asserted. safeedged must not
+      # link open62541 -- that is the entire reason the OPC UA server is a
+      # separate binary, and a stray target_link_libraries would undo it
+      # silently.
+      - name: safeedged links no OPC UA
+        run: |
+          if ldd build-opcua/safeedged 2>/dev/null | grep -qi open62541; then
+            echo "safeedged is linked against open62541 -- the process boundary is gone" >&2
+            exit 1
+          fi
+          if nm -C build-opcua/safeedged 2>/dev/null | grep -q "UA_Server_new"; then
+            echo "safeedged contains open62541 symbols" >&2
+            exit 1
+          fi
+          echo "safeedged carries no OPC UA code, as intended"
+
   install-consumer:
     name: installed package is consumable
     runs-on: ubuntu-24.04

@@ -79,3 +79,21 @@ target_link_libraries(safeedge_edge_tests PRIVATE
 gtest_discover_tests(safeedge_edge_tests
   PROPERTIES LABELS unit TIMEOUT 300
   DISCOVERY_TIMEOUT 60)
+
+# Only when the component is built. Guarding here rather than skipping at run
+# time means the default build does not compile a protocol stack to run tests
+# that would immediately be skipped.
+if(SAFEEDGE_BUILD_OPCUA)
+  add_executable(safeedge_opcua_tests
+    test_opcua_address_space.cpp)
+  target_link_libraries(safeedge_opcua_tests PRIVATE
+    safeedge::opcua
+    safeedge::warnings
+    GTest::gtest_main)
+  if(SAFEEDGE_UA_INCLUDES)
+    target_include_directories(safeedge_opcua_tests SYSTEM PRIVATE ${SAFEEDGE_UA_INCLUDES})
+  endif()
+  gtest_discover_tests(safeedge_opcua_tests
+    PROPERTIES LABELS unit TIMEOUT 300
+    DISCOVERY_TIMEOUT 60)
+endif()

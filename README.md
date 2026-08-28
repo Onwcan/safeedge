@@ -25,8 +25,10 @@ no-allocation rule enforced rather than documented.
 | WP-11 | `edge` — container packaging, metrics, dashboard | **Done** |
 
 | WP-11b | External emergency stop, acknowledgement, timestamped safety signal | **Done** |
+| WP-11c | `opcua` — OPC UA server, in its own process | **Done** |
 
-**210 tests**, all passing under Debug, Release, ASan+UBSan and ThreadSanitizer,
+**214 tests** with the OPC UA component enabled, 210 without, all passing under
+Debug, Release, ASan+UBSan and ThreadSanitizer,
 plus a libFuzzer target on the telegram decoder. The shared-memory tests
 genuinely `fork()` rather than simulating a second process with a thread.
 
@@ -102,6 +104,66 @@ a nanosecond monotonic value is around 1e18, and a gauge rendered to six
 significant digits would be wrong by hundreds of millions of nanoseconds.
 `/metrics` carries the *age* instead, which is a small number and renders
 exactly.
+
+## Speaking OPC UA
+
+```bash
+cmake -S . -B build -DSAFEEDGE_BUILD_OPCUA=ON && cmake --build build -j
+```
+
+```bash
+SAFEEDGE_SNAPSHOT_SHM=/safeedge-runtime ./build/safeedged &
+SAFEEDGE_SNAPSHOT_SHM=/safeedge-runtime ./build/safeedge-opcua
+```
+
+`opc.tcp://localhost:4840`, browse to **SafeEdgeRuntime**: safety state, torque
+permitted, emergency stop, the safety sequence, wakeup jitter percentiles, cycle
+counters, and whether real-time scheduling was granted.
+
+**It is a separate process on purpose, and off by default.** OPC UA brings a
+session layer, two encoders, a certificate handler and a subscription engine.
+Any of that failing — a parse bug on a malformed request, an unbounded
+allocation, a certificate library calling `abort()` — must not be able to take
+down a loop holding a machine in a safe state. Putting it behind a process
+boundary makes that structural rather than aspirational: no shared heap, no
+shared allocator, nothing in common but a shared-memory page.
+
+It also keeps `safeedged` at 1.51 MB on `scratch` with no userland, which the
+container job verifies by unpacking the layers. Linking a protocol stack into
+the failsafe binary would end that.
+
+The snapshot crosses between them through the `ipc` component — the same seqlock
+that serves the in-process HTTP handlers, so there is one publish rather than
+two.
+
+### Two things that had to be got right
+
+**The namespace index is not a constant.** The first version hardcoded 1 and
+failed to build its address space at all. An index is a per-server lookup;
+index 0 is the base namespace, 1 is conventionally the server's own application
+URI, so a custom one usually lands at 2 — and "usually" is the problem. The URI
+is the contract, the index is a lookup, and a client resolves
+`urn:safeedge:runtime` at connect time. The test asserts only that the index is
+non-zero, because asserting a number would enshrine the assumption that failed.
+
+**A bad status does not clear a value.** The first version wrote `hasValue =
+false` with `BadNoData`, expecting a client to get nothing. open62541 keeps the
+previous value, so a client reading the value attribute would still see a dead
+runtime's *torque permitted*, indefinitely — with a correct status nobody was
+obliged to read. Both channels now carry the message: the status says "I do not
+know", and the value is the zeroed snapshot, so a client that ignores the status
+still reads *not permitted*.
+
+That is the same rule this codebase has now arrived at three times in three
+vocabularies — `UNSPECIFIED` at zero in the protobuf contracts, the writer
+heartbeat on the shared-memory link, and a StatusCode paired with a fail-safe
+value here. **The absence of information must never be representable as
+permission.**
+
+Full reasoning in [ADR-0010](docs/adr/0010-opcua-in-its-own-process.md),
+including what is *not* addressed: the server is read-only, anonymous and
+unencrypted, which suits a trusted cell network and nothing else. The daemon
+says so at startup rather than leaving it to be found.
 
 ## Build
 

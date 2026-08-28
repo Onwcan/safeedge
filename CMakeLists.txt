@@ -15,6 +15,17 @@ option(SAFEEDGE_BUILD_TESTS      "Build unit tests"         ${SAFEEDGE_IS_TOP_LE
 option(SAFEEDGE_BUILD_BENCHMARKS "Build latency benchmarks" ${SAFEEDGE_IS_TOP_LEVEL})
 option(SAFEEDGE_ENABLE_WERROR    "Treat warnings as errors" ON)
 option(SAFEEDGE_BUILD_FUZZERS    "Build libFuzzer targets (Clang only)" OFF)
+
+# OPC UA is off by default, and that is a decision rather than caution.
+#
+# open62541 is a protocol stack: a session layer, two encoders, a certificate
+# handler and a subscription engine. It builds in a couple of minutes, which is
+# a couple of minutes every contributor pays for a component most of them are
+# not touching. More importantly the failsafe runtime does not link it -- the
+# OPC UA server is a separate binary in a separate process, so a fault anywhere
+# in that stack cannot reach the control loop, and safeedged keeps its 1.51 MB
+# scratch image.
+option(SAFEEDGE_BUILD_OPCUA      "Build the OPC UA server component"    OFF)
 option(SAFEEDGE_BUILD_EXAMPLES   "Build example programs" ${SAFEEDGE_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -191,6 +202,64 @@ target_link_libraries(safeedged PRIVATE
   safeedge::ipc
   safeedge::warnings
   "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>")
+
+# --- opcua component -------------------------------------------------------
+#
+# Its own library and its own binary, linked against open62541. safeedged links
+# neither, which is the point: a fault in a protocol stack must not be able to
+# reach a loop that is holding a machine in a safe state.
+if(SAFEEDGE_BUILD_OPCUA)
+  include(FetchContent)
+
+  set(UA_ENABLE_AMALGAMATION OFF CACHE BOOL "" FORCE)
+  set(UA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(UA_ENABLE_SUBSCRIPTIONS ON CACHE BOOL "" FORCE)
+  set(UA_FORCE_WERROR OFF CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(open62541
+    GIT_REPOSITORY https://github.com/open62541/open62541.git
+    GIT_TAG        v1.4.12
+    GIT_SHALLOW    TRUE
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(open62541)
+
+  # open62541's headers are included as SYSTEM, so this project's warning bar
+  # does not apply to them. Without this, -Wextra -Werror fails the build on
+  # `unused parameter 'lock'` inside open62541's own generated config.h -- a
+  # diagnostic about somebody else's code that nobody here can act on. Holding a
+  # third-party header to your own standard produces exactly one outcome:
+  # somebody turns the warning off globally.
+  get_target_property(SAFEEDGE_UA_INCLUDES open62541::open62541
+                      INTERFACE_INCLUDE_DIRECTORIES)
+
+  add_library(safeedge_opcua src/opcua/address_space.cpp)
+  add_library(safeedge::opcua ALIAS safeedge_opcua)
+  if(SAFEEDGE_UA_INCLUDES)
+    target_include_directories(safeedge_opcua SYSTEM PUBLIC ${SAFEEDGE_UA_INCLUDES})
+  endif()
+  target_include_directories(safeedge_opcua
+    PUBLIC
+      $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  target_link_libraries(safeedge_opcua
+    PUBLIC open62541::open62541
+    PRIVATE safeedge::warnings)
+  set_target_properties(safeedge_opcua PROPERTIES
+    OUTPUT_NAME safeedge-opcua
+    EXPORT_NAME opcua
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR})
+
+  add_executable(safeedge_opcua_server src/apps/safeedge_opcua.cpp)
+  set_target_properties(safeedge_opcua_server PROPERTIES OUTPUT_NAME safeedge-opcua)
+  if(SAFEEDGE_UA_INCLUDES)
+    target_include_directories(safeedge_opcua_server SYSTEM PRIVATE ${SAFEEDGE_UA_INCLUDES})
+  endif()
+  target_link_libraries(safeedge_opcua_server PRIVATE
+    safeedge::opcua
+    safeedge::ipc
+    safeedge::warnings)
+endif()
 
 if(SAFEEDGE_BUILD_TESTS)
   enable_testing()
