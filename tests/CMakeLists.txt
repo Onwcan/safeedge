@@ -85,7 +85,8 @@ gtest_discover_tests(safeedge_edge_tests
 # that would immediately be skipped.
 if(SAFEEDGE_BUILD_OPCUA)
   add_executable(safeedge_opcua_tests
-    test_opcua_address_space.cpp)
+    test_opcua_address_space.cpp
+    test_opcua_security.cpp)
   target_link_libraries(safeedge_opcua_tests PRIVATE
     safeedge::opcua
     safeedge::warnings

@@ -26,6 +26,14 @@ option(SAFEEDGE_BUILD_FUZZERS    "Build libFuzzer targets (Clang only)" OFF)
 # in that stack cannot reach the control loop, and safeedged keeps its 1.51 MB
 # scratch image.
 option(SAFEEDGE_BUILD_OPCUA      "Build the OPC UA server component"    OFF)
+
+# Encryption is ON whenever the component is built.
+#
+# A switch exists because the crypto backend is another dependency to build, not
+# because running without it is a supported posture. An OPC UA server reachable
+# on a plant network with SecurityPolicy#None is a server anyone on that network
+# can read and impersonate.
+option(SAFEEDGE_OPCUA_ENCRYPTION "Build the OPC UA component with mbedTLS"  ON)
 option(SAFEEDGE_BUILD_EXAMPLES   "Build example programs" ${SAFEEDGE_IS_TOP_LEVEL})
 
 set(CMAKE_CXX_STANDARD 20)
@@ -211,6 +219,39 @@ target_link_libraries(safeedged PRIVATE
 if(SAFEEDGE_BUILD_OPCUA)
   include(FetchContent)
 
+  if(SAFEEDGE_OPCUA_ENCRYPTION)
+    # mbedTLS rather than OpenSSL because it builds from source with no system
+    # packages, which is what lets this component be built on a machine with no
+    # install rights. Two settings are not optional:
+    #
+    #   DISABLE_PACKAGE_CONFIG_AND_INSTALL defaults to ON for a subproject, which
+    #   leaves mbedTLS's targets out of any export set -- and open62541's own
+    #   install(EXPORT) then fails because it references them. Configure dies
+    #   with "requires target mbedtls that is not in any export set", which does
+    #   not obviously mean "turn on mbedTLS's install rules".
+    #
+    #   MBEDTLS_FATAL_WARNINGS is mbedTLS's own -Werror. GCC 15 added
+    #   -Wunterminated-string-initialization, which fires inside mbedTLS 3.6.2,
+    #   so the dependency fails to compile on a new enough compiler. Somebody
+    #   else's warning bar is not this project's to satisfy.
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(DISABLE_PACKAGE_CONFIG_AND_INSTALL OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(mbedtls
+      GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+      GIT_TAG        v3.6.2
+      GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(mbedtls)
+
+    set(UA_ENABLE_ENCRYPTION "MBEDTLS" CACHE STRING "" FORCE)
+    set(MBEDTLS_INCLUDE_DIRS "${mbedtls_SOURCE_DIR}/include" CACHE PATH "" FORCE)
+    set(MBEDTLS_LIBRARY mbedtls CACHE STRING "" FORCE)
+    set(MBEDX509_LIBRARY mbedx509 CACHE STRING "" FORCE)
+    set(MBEDCRYPTO_LIBRARY mbedcrypto CACHE STRING "" FORCE)
+  endif()
+
   set(UA_ENABLE_AMALGAMATION OFF CACHE BOOL "" FORCE)
   set(UA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(UA_ENABLE_SUBSCRIPTIONS ON CACHE BOOL "" FORCE)
@@ -232,7 +273,7 @@ if(SAFEEDGE_BUILD_OPCUA)
   get_target_property(SAFEEDGE_UA_INCLUDES open62541::open62541
                       INTERFACE_INCLUDE_DIRECTORIES)
 
-  add_library(safeedge_opcua src/opcua/address_space.cpp)
+  add_library(safeedge_opcua src/opcua/address_space.cpp src/opcua/security.cpp)
   add_library(safeedge::opcua ALIAS safeedge_opcua)
   if(SAFEEDGE_UA_INCLUDES)
     target_include_directories(safeedge_opcua SYSTEM PUBLIC ${SAFEEDGE_UA_INCLUDES})
@@ -249,6 +290,18 @@ if(SAFEEDGE_BUILD_OPCUA)
     EXPORT_NAME opcua
     VERSION   ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR})
+
+  # The client side, and a measurement. Ships as a tool rather than a test
+  # because it needs a running server and a real transition to observe -- which
+  # is a thing a person does, not a thing CI does in three seconds.
+  add_executable(safeedge_opcua_probe src/apps/safeedge_opcua_probe.cpp)
+  set_target_properties(safeedge_opcua_probe PROPERTIES OUTPUT_NAME safeedge-opcua-probe)
+  target_link_libraries(safeedge_opcua_probe PRIVATE
+    safeedge::opcua
+    safeedge::warnings)
+  if(SAFEEDGE_UA_INCLUDES)
+    target_include_directories(safeedge_opcua_probe SYSTEM PRIVATE ${SAFEEDGE_UA_INCLUDES})
+  endif()
 
   add_executable(safeedge_opcua_server src/apps/safeedge_opcua.cpp)
   set_target_properties(safeedge_opcua_server PROPERTIES OUTPUT_NAME safeedge-opcua)

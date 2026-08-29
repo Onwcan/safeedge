@@ -127,7 +127,7 @@ jobs:
           CC: gcc-14
           CXX: g++-14
         run: |
-          cmake -S . -B build-opcua -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DSAFEEDGE_BUILD_OPCUA=ON             -DSAFEEDGE_BUILD_BENCHMARKS=OFF             -DSAFEEDGE_BUILD_EXAMPLES=OFF
+          cmake -S . -B build-opcua -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DSAFEEDGE_BUILD_OPCUA=ON             -DSAFEEDGE_OPCUA_ENCRYPTION=ON             -DSAFEEDGE_BUILD_BENCHMARKS=OFF             -DSAFEEDGE_BUILD_EXAMPLES=OFF
 
       - name: Build
         run: cmake --build build-opcua -j "$(nproc)"
@@ -150,6 +150,20 @@ jobs:
             exit 1
           fi
           echo "safeedged carries no OPC UA code, as intended"
+
+      # The whole point of the security work: a server built with encryption
+      # must not still be offering plaintext. SecurityFixture covers it, and this
+      # asserts the build actually has a crypto backend -- a build without one
+      # would pass every other test while serving None to everybody.
+      - name: The build has a crypto backend
+        run: |
+          if ! nm -C build-opcua/libsafeedge-opcua.a 2>/dev/null | grep -q "UA_CreateCertificate\|mbedtls"; then
+            if ! grep -q "UA_ENABLE_ENCRYPTION" build-opcua/_deps/open62541-build/src_generated/open62541/config.h 2>/dev/null; then
+              echo "the OPC UA component was built without encryption" >&2
+              exit 1
+            fi
+          fi
+          echo "encryption is compiled in"
 
   install-consumer:
     name: installed package is consumable

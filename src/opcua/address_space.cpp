@@ -44,8 +44,8 @@ struct VariableSpec {
   const UA_DataType* type;
 };
 
-const std::array<VariableSpec, 13>& specs() {
-  static const std::array<VariableSpec, 13> kSpecs{{
+const std::array<VariableSpec, 14>& specs() {
+  static const std::array<VariableSpec, 14> kSpecs{{
       {NodeNumber::kSafetyState, "SafetyState", &UA_TYPES[UA_TYPES_UINT32]},
       {NodeNumber::kTorquePermitted, "TorquePermitted", &UA_TYPES[UA_TYPES_BOOLEAN]},
       {NodeNumber::kFaultLatched, "FaultLatched", &UA_TYPES[UA_TYPES_BOOLEAN]},
@@ -54,6 +54,8 @@ const std::array<VariableSpec, 13>& specs() {
       {NodeNumber::kSafetySequence, "SafetySequence", &UA_TYPES[UA_TYPES_UINT64]},
       {NodeNumber::kSafetyStateAgeSeconds, "SafetyStateAgeSeconds",
        &UA_TYPES[UA_TYPES_DOUBLE]},
+      {NodeNumber::kSafetyTransitionMonotonicNs, "SafetyTransitionMonotonicNanoseconds",
+       &UA_TYPES[UA_TYPES_INT64]},
       {NodeNumber::kCyclesExecuted, "CyclesExecuted", &UA_TYPES[UA_TYPES_UINT64]},
       {NodeNumber::kOverruns, "Overruns", &UA_TYPES[UA_TYPES_UINT64]},
       {NodeNumber::kJitterP99Ns, "WakeupJitterP99Nanoseconds", &UA_TYPES[UA_TYPES_INT64]},
@@ -178,6 +180,12 @@ void publishSnapshot(UA_Server* server, const edge::RuntimeSnapshot& snapshot,
   writeValue<UA_Double>(server, NodeNumber::kSafetyStateAgeSeconds,
                         &UA_TYPES[UA_TYPES_DOUBLE],
                         static_cast<double>(snapshot.safety_state_age_ns) / 1e9, fresh);
+
+  // Int64, so the value is exact. This is the node a client subscribes to in
+  // order to time its own notifications against the runtime's decision.
+  writeValue<UA_Int64>(
+      server, NodeNumber::kSafetyTransitionMonotonicNs, &UA_TYPES[UA_TYPES_INT64],
+      static_cast<UA_Int64>(snapshot.safety_transition_monotonic_ns), fresh);
 
   writeValue<UA_UInt64>(server, NodeNumber::kCyclesExecuted, &UA_TYPES[UA_TYPES_UINT64],
                         snapshot.cycles_executed, fresh);

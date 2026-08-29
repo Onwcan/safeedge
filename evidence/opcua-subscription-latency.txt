@@ -1,0 +1,29 @@
+OPC UA subscription latency: runtime decision -> client notification
+====================================================================
+
+Three processes: safeedged decides and publishes a snapshot to shared
+memory, safeedge-opcua serves it, and a subscribed client times its own
+notifications against the transition instant the runtime stamped.
+
+The first notification of each run is discarded: a subscription opens by
+reporting the current value, which is state rather than an event.
+
+  publish  10 ms  sampling  10 ms   n=6   min 7.2 ms   median 10.1 ms   max 13.2 ms
+  publish  10 ms  sampling  50 ms   n=6   min 15.4 ms   median 30.9 ms   max 52.1 ms
+  publish  10 ms  sampling 200 ms   n=6   min 163.1 ms   median 180.4 ms   max 194.8 ms
+  publish 100 ms  sampling  10 ms   n=6   min 15.1 ms   median 25.5 ms   max 38.7 ms
+
+What binds this is the subscription's REVISED publishing interval, which
+is the server's decision and not the client's. With open62541's stock
+limits a client asking for 10 ms is given 100 ms publishing and 50 ms
+sampling, and reports a median near 75 ms; the probe prints the revision
+so the difference is visible rather than assumed.
+
+safeedge-opcua lowers publishingIntervalLimits.min and
+samplingIntervalLimits.min to 10 ms, so the same request is granted and
+the same client reports a median near 12 ms. Six times, from a server
+setting -- the client never had the say.
+
+A subscription is therefore not inherently faster than a poll. It removes
+the CLIENT's poll. The server-side intervals remain, and they are
+somebody's configuration rather than a property of the protocol.

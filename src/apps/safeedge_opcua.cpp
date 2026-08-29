@@ -42,6 +42,7 @@
 #include "safeedge/ipc/seqlock_slot.hpp"
 #include "safeedge/ipc/shared_memory.hpp"
 #include "safeedge/opcua/address_space.hpp"
+#include "safeedge/opcua/security.hpp"
 
 namespace {
 
@@ -117,19 +118,71 @@ int main() {
     return 2;
   }
   UA_ServerConfig* config = UA_Server_getConfig(server);
-  if (UA_ServerConfig_setMinimal(config, port, nullptr) != UA_STATUSCODE_GOOD) {
-    logEvent("fatal", "could not configure the OPC UA server");
+
+  // Unencrypted operation is opt-in and loud. The default is a server that
+  // either has a certificate or does not start.
+  const bool allow_unencrypted = environmentLong("SAFEEDGE_OPCUA_INSECURE", 0) != 0;
+  const std::string cert_path = environmentString("SAFEEDGE_OPCUA_CERT", "");
+  const std::string key_path = environmentString("SAFEEDGE_OPCUA_KEY", "");
+
+  const opcua::SecurityPosture posture = opcua::configureSecurity(
+      config, port, cert_path, key_path, allow_unencrypted, /*allow_anonymous=*/true);
+
+  if (posture.policy_count == 0) {
+    logEvent("fatal", "could not configure security", posture.detail.c_str());
     UA_Server_delete(server);
     return 2;
   }
 
-  // Said out loud rather than left for someone to discover. The default
-  // configuration accepts anonymous connections with no encryption, which is
-  // appropriate for a read-only view on a trusted cell network and is not
-  // appropriate anywhere else. Making it safe to expose means certificates, an
-  // AccessControl plugin and a security policy above None -- a separate piece of
-  // work, not a flag.
-  logEvent("warn", "anonymous access, no encryption: trusted cell network only");
+  switch (posture.origin) {
+    case opcua::CertificateOrigin::kLoadedFromFiles:
+      logEvent("info", "encrypted, stable identity", posture.detail.c_str());
+      break;
+    case opcua::CertificateOrigin::kGeneratedSelfSigned:
+      // Worth a warning rather than an info line. It works, and it means every
+      // client has to re-trust the server after each restart -- which is the
+      // friction that teaches operators to disable certificate checking.
+      logEvent("warn", "encrypted with a throwaway identity", posture.detail.c_str());
+      break;
+    case opcua::CertificateOrigin::kNone:
+      logEvent("warn", "running without encryption", posture.detail.c_str());
+      break;
+  }
+  if (posture.allows_unencrypted) {
+    logEvent("warn",
+             "SecurityPolicy#None is offered: traffic can be read and forged by "
+             "anyone on this network",
+             nullptr);
+  }
+
+  // A client cannot subscribe faster than the server permits, and the defaults
+  // are slow for this purpose.
+  //
+  // open62541's stock configuration floors the publishing interval at 100 ms and
+  // the sampling interval at 50 ms. A client asking for 10 ms is silently given
+  // those instead -- `revisedPublishingInterval` says so, and a client that does
+  // not read it reports the interval it wished for. Measured: a subscription
+  // requesting 10/10 sat at a 75 ms median because it was actually running at
+  // 100/50.
+  //
+  // Lowering the floors moves the decision to where it belongs. It is a real
+  // trade: a shorter publishing interval means more wakeups and more packets per
+  // client per second, and a server exposed to many clients should not hand that
+  // out freely. For a read-only view of a safety runtime on a cell network, with
+  // a handful of subscribers, 10 ms is affordable and 100 ms is not obviously
+  // defensible -- and either way it should be a number somebody chose.
+  config->publishingIntervalLimits.min = 10.0;
+  config->samplingIntervalLimits.min = 10.0;
+
+  // Anonymous access remains, and is a different question from encryption.
+  // Encryption means nobody can read or forge the traffic; it says nothing about
+  // who may ask. Nothing in this address space is writable and nothing in it is
+  // secret, so anonymous reads of a safety runtime's own diagnostics are
+  // defensible on a cell network. That stops being true the moment anything
+  // here becomes writable, which is why nothing is.
+  if (posture.allows_anonymous) {
+    logEvent("info", "anonymous access permitted (the address space is read-only)");
+  }
 
   if (!opcua::buildAddressSpace(server)) {
     logEvent("fatal", "could not build the address space");

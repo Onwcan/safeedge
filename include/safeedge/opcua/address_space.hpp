@@ -39,6 +39,15 @@ enum class NodeNumber : std::uint32_t {
   kSafetySequence = 1006,
   kSafetyStateAgeSeconds = 1007,
 
+  /// The monotonic instant of the last safety transition, in nanoseconds.
+  ///
+  /// Exposed here and deliberately NOT as a Prometheus gauge. That exposition
+  /// format renders a double to six significant digits, and a CLOCK_MONOTONIC
+  /// nanosecond value near 1e18 does not survive it. OPC UA has a signed 64-bit
+  /// integer type, so the number arrives intact -- which is what lets a client
+  /// subscribe to this node and compute its own notification latency.
+  kSafetyTransitionMonotonicNs = 1008,
+
   kCyclesExecuted = 1010,
   kOverruns = 1011,
   kJitterP99Ns = 1012,
@@ -46,7 +55,7 @@ enum class NodeNumber : std::uint32_t {
   kRealtimeSchedulingGranted = 1014,
   kUptimeSeconds = 1015,
 
-  // Next free: 1016. Nothing below is ever reused.
+  // Next free: 1009 in the safety block, 1016 overall. Nothing below is ever reused.
 };
 
 /// Creates the SafeEdgeRuntime object and its variables.

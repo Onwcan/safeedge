@@ -160,10 +160,77 @@ heartbeat on the shared-memory link, and a StatusCode paired with a fail-safe
 value here. **The absence of information must never be representable as
 permission.**
 
+### Subscriptions: who actually decides the latency
+
+`safeedge-opcua-probe` subscribes and times its own notifications against the
+instant the runtime decided — the same quantity `pickcell` measures over HTTP.
+
+| request | granted | median |
+|---|---|---:|
+| 10 ms / 10 ms | 100 ms / 50 ms (open62541 stock limits) | **74.9 ms** |
+| 10 ms / 10 ms | 10 ms / 10 ms (this server's limits) | **12.1 ms** |
+
+Same client, same request, **six times the difference** — decided entirely by
+`publishingIntervalLimits` on the server. A client asking for 10 ms is quietly
+given 100 ms; `revisedPublishingInterval` says so, and a client that never reads
+it reports the interval it wished for. This server lowers both floors and the
+probe prints any revision it receives.
+
+That is the third protocol here to need the same discipline, after
+`pthread_setschedparam` succeeding while granting nothing and `SCHED_FIFO` being
+refused by an unprivileged container: **read back what you were granted.**
+
+Two more corrections on the way there, both recorded in the ADR: a
+subscription's first notification reports *state, not an event* (the first run
+measured 7107 ms, which was the age of the state), and
+`UA_Client_run_iterate(client, timeout)` **is** the client's poll — the first
+probe passed 100 ms and spent its time measuring its own loop.
+
+**A subscription is not inherently faster than a poll.** It removes the
+*client's* poll. The server-side intervals remain, and they are somebody's
+configuration rather than a property of the protocol.
+
+### Encrypted by default, and plaintext by opt-in
+
+The first version ran unencrypted and warned about it at startup. A warning is
+not a control, so the server now either has a certificate or does not start.
+
+`SecurityPolicy#None` is **removed** unless `SAFEEDGE_OPCUA_INSECURE=1`. That
+matters more than it sounds: open62541 adds `None` *alongside* the encrypted
+policies, so a server configured "with encryption" will happily serve plaintext
+to any client that asks — and clients ask, because it works.
+
+A certificate is loaded from `SAFEEDGE_OPCUA_CERT` / `SAFEEDGE_OPCUA_KEY` if
+provided, and generated at startup if not. Generation is logged as a **warning**,
+not an info line, because it means every client must re-trust the server after
+each restart — and that friction is exactly what teaches operators to disable
+certificate checking. There is no silent fallback to plaintext: if a certificate
+cannot be obtained, the server fails.
+
+**One failure worth the retelling.** The generated certificate's
+`subjectAltName` said `urn:safeedge:opcua` while open62541 defaults the server's
+ApplicationUri to `urn:open62541.server.application`. OPC UA requires them to
+match — a certificate is a claim to an identity, and a server presenting one has
+to claim that identity. The symptom: the server started, built its address space,
+logged `listening`, and *then* the event loop exited with
+`BadCertificateUriInvalid`. Everything up to fatal looked correct. One constant
+now feeds both, and a test asserts every endpoint advertises it.
+
+**What this is not.** Client certificates are accepted without validation, on
+purpose. This protects the *channel*; client certificates would be about
+*authentication*, and the server permits anonymous login, so validating one
+authenticates nobody. Real client authentication needs a trust list **and**
+anonymous turned off — doing one without the other produces a server that looks
+authenticated and is not. The startup log states the posture rather than leaving
+it to be inferred from a clean start.
+
+Encryption costs about **4 ms** on the subscription path — 14.0 ms median
+against 10.1 ms unencrypted, same intervals. Small, real, and measured rather
+than assumed in either direction.
+
 Full reasoning in [ADR-0010](docs/adr/0010-opcua-in-its-own-process.md),
-including what is *not* addressed: the server is read-only, anonymous and
-unencrypted, which suits a trusted cell network and nothing else. The daemon
-says so at startup rather than leaving it to be found.
+including the two mbedTLS build settings that are not optional and why
+`UA_STRING_STATIC` cannot be used in this codebase.
 
 ## Build
 
