@@ -261,6 +261,15 @@ actionlint .github/workflows/ci.yml
 A YAML error prevents GitHub Actions from creating any jobs, so the workflow
 cannot lint its own broken definition and there will be no job log to inspect.
 
+`actionlint` validates the local workflow structure, but it does not resolve
+remote `uses:` references. The Trivy scanner is therefore pinned to the full
+commit behind a published upstream release, with the release name beside it in
+the workflow. When updating that pin, verify against the upstream
+[Trivy Action releases](https://github.com/aquasecurity/trivy-action/releases)
+that the release tag resolves to the recorded commit. A missing reference fails
+`Set up job` before checkout, so none of the image build, scan, or smoke-test
+steps run.
+
 To see what the executor actually achieves on your machine:
 
 ```bash
