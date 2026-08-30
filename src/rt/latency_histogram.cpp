@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 
 namespace safeedge::rt {
 
@@ -34,9 +35,8 @@ std::uint64_t LatencyHistogram::bucketUpperBound(std::size_t index) noexcept {
   return lower + (1ULL << shift) - 1;
 }
 
-void LatencyHistogram::recordMany(std::int64_t value,
-                                  std::uint64_t occurrences) noexcept {
-  if (occurrences == 0) {
+void LatencyHistogram::recordMany(std::int64_t value, std::uint64_t count) noexcept {
+  if (count == 0) {
     return;
   }
   // A negative sample means the clock ran backwards between two reads. That is
@@ -45,9 +45,9 @@ void LatencyHistogram::recordMany(std::int64_t value,
   const std::int64_t clamped = std::max<std::int64_t>(value, 0);
 
   const std::size_t index = bucketIndexFor(static_cast<std::uint64_t>(clamped));
-  buckets_[index] += occurrences;
-  count_ += occurrences;
-  sum_ += static_cast<double>(clamped) * static_cast<double>(occurrences);
+  buckets_[index] += count;
+  count_ += count;
+  sum_ += static_cast<double>(clamped) * static_cast<double>(count);
   max_ = std::max(max_, clamped);
   min_ = std::min(min_, clamped);
 }
@@ -92,7 +92,7 @@ std::int64_t LatencyHistogram::percentile(double quantile) const noexcept {
   // Rank of the sample we are looking for, 1-based. Rounding up means p100
   // resolves to the last sample rather than one short of it, and p0 to the
   // first.
-  auto target = static_cast<std::uint64_t>(q * static_cast<double>(count_) + 0.5);
+  auto target = static_cast<std::uint64_t>(std::ceil(q * static_cast<double>(count_)));
   target = std::clamp<std::uint64_t>(target, 1, count_);
 
   std::uint64_t seen = 0;

@@ -103,6 +103,17 @@ TEST(LatencyHistogram, ExactInTheLinearRegion) {
   EXPECT_EQ(h.percentile(1.0), 50);
 }
 
+TEST(LatencyHistogram, PercentileUsesTheNearestRankCeiling) {
+  LatencyHistogram h;
+  h.record(10);
+  h.record(20);
+  h.record(30);
+
+  // ceil(0.34 * 3) == 2. Rounding to the nearest integer would incorrectly
+  // select the first sample and under-report the percentile.
+  EXPECT_EQ(h.percentile(0.34), 20);
+}
+
 TEST(LatencyHistogram, PercentilesTrackAKnownDistribution) {
   // 990 samples at 1000 ns and 10 at 500000 ns. p50 and p90 must land on the
   // body, p99.9 on the tail -- the shape a real cycle-time histogram has.

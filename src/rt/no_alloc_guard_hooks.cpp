@@ -20,13 +20,25 @@
 
 #include "safeedge/rt/no_alloc_guard.hpp"
 
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define SAFEEDGE_THREAD_SANITIZER 1
+#endif
+#endif
+
+#if defined(__SANITIZE_THREAD__) && !defined(SAFEEDGE_THREAD_SANITIZER)
+#define SAFEEDGE_THREAD_SANITIZER 1
+#endif
+
 namespace {
 
+#if !defined(SAFEEDGE_THREAD_SANITIZER)
 /// aligned_alloc requires the requested size to be a multiple of the alignment.
 std::size_t roundUpTo(std::size_t value, std::size_t alignment) noexcept {
   const std::size_t remainder = value % alignment;
   return remainder == 0 ? value : value + (alignment - remainder);
 }
+#endif
 
 /// Records, at static-initialisation time, that the replacement below is
 /// present in this binary. Lets a test tell "the guard found nothing" apart
@@ -38,6 +50,20 @@ struct GuardInstaller {
 const GuardInstaller g_installer;
 
 }  // namespace
+
+#if defined(SAFEEDGE_THREAD_SANITIZER)
+
+// TSan supplies the global new/delete family itself and defines those symbols
+// strongly. Its public allocator hook lets the guard observe each successful
+// allocation without competing with, or bypassing, TSan's allocator.
+// The Linux interface uses the ordinary C calling convention; spelling the
+// published signature here also supports GCC, which does not install LLVM's
+// public sanitizer headers.
+extern "C" void __sanitizer_malloc_hook(const volatile void*, std::size_t bytes) {
+  safeedge::rt::detail::noteAllocation(bytes);
+}
+
+#else
 
 void* operator new(std::size_t bytes) {
   safeedge::rt::detail::noteAllocation(bytes);
@@ -109,3 +135,5 @@ void operator delete(void* pointer, std::align_val_t, const std::nothrow_t&) noe
 void operator delete[](void* pointer, std::align_val_t, const std::nothrow_t&) noexcept {
   std::free(pointer);
 }
+
+#endif

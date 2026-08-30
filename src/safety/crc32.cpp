@@ -28,7 +28,7 @@ constexpr std::array<std::uint32_t, 256> kTable = buildTable();
 }  // namespace
 
 void Crc32::update(std::uint8_t byte) noexcept {
-  const std::uint8_t index = static_cast<std::uint8_t>(state_ ^ byte);
+  const auto index = static_cast<std::uint8_t>(state_ ^ byte);
   state_ = (state_ >> 8U) ^ kTable[index];
 }
 

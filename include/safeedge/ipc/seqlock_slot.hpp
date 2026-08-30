@@ -70,7 +70,6 @@ class SeqlockSlot {
                 "a seqlock copies with memcpy; T must be trivially copyable");
   static_assert(std::is_standard_layout_v<T>,
                 "the slot may live in shared memory; T must have a stable layout");
-  static_assert(sizeof(T) > 0);
 
   static constexpr std::size_t kWordBytes = sizeof(std::uint64_t);
   static constexpr std::size_t kWordCount = (sizeof(T) + kWordBytes - 1) / kWordBytes;

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "safeedge/ipc/shared_memory.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 #if defined(__linux__)
@@ -27,6 +29,21 @@ bool nameIsWellFormed(const char* name) noexcept {
 }
 
 #if defined(__linux__)
+template <typename Result>
+const char* resolvedErrorText(Result result, const char* buffer) noexcept {
+  if constexpr (std::is_pointer_v<Result>) {
+    return result != nullptr ? result : "unknown error";
+  } else {
+    return result == 0 ? buffer : "unknown error";
+  }
+}
+
+const char* threadSafeErrorText(int error) noexcept {
+  thread_local std::array<char, 256> buffer{};
+  return resolvedErrorText(::strerror_r(error, buffer.data(), buffer.size()),
+                           buffer.data());
+}
+
 /// Maps `bytes` of `descriptor`, or returns nullptr and fills `error`.
 ///
 /// Returns the raw address rather than a SharedMemoryRegion so that it can live
@@ -53,7 +70,14 @@ void* mapDescriptor(int descriptor, std::size_t bytes,
 }  // namespace
 
 const char* SharedMemoryError::what() const noexcept {
-  return ok() ? "ok" : std::strerror(error_number);
+  if (ok()) {
+    return "ok";
+  }
+#if defined(__linux__)
+  return threadSafeErrorText(error_number);
+#else
+  return std::strerror(error_number);  // NOLINT(concurrency-mt-unsafe)
+#endif
 }
 
 SharedMemoryRegion::~SharedMemoryRegion() { close(); }

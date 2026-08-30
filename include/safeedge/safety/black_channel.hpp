@@ -190,6 +190,8 @@ class SafetyReceiver {
   /// `now_ns` is a monotonic timestamp supplied by the caller rather than read
   /// from a clock inside, so that the whole fault model can be exercised in
   /// tests at arbitrary simulated times without sleeping.
+  /// `payload_size` and `status_out` are reset on every call; their values
+  /// describe only that call and must be consumed before the next receive.
   [[nodiscard]] ReceiveStatus receive(std::span<const std::uint8_t> raw,
                                       std::int64_t now_ns,
                                       std::span<std::uint8_t> payload_out,

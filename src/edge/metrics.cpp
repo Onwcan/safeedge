@@ -10,8 +10,9 @@ namespace {
 void appendMetric(std::string& out, const char* name, const char* help, const char* type,
                   double value) {
   char line[512];
-  std::snprintf(line, sizeof(line), "# HELP %s %s\n# TYPE %s %s\n%s %.6g\n", name, help,
-                name, type, name, value);
+  static_cast<void>(std::snprintf(line, sizeof(line),
+                                  "# HELP %s %s\n# TYPE %s %s\n%s %.6g\n", name, help,
+                                  name, type, name, value));
   out += line;
 }
 
@@ -19,8 +20,9 @@ void appendLabelled(std::string& out, const char* name, const char* help,
                     const char* type, const char* label_name, const char* label_value,
                     double value) {
   char line[512];
-  std::snprintf(line, sizeof(line), "# HELP %s %s\n# TYPE %s %s\n%s{%s=\"%s\"} %.6g\n",
-                name, help, name, type, name, label_name, label_value, value);
+  static_cast<void>(std::snprintf(
+      line, sizeof(line), "# HELP %s %s\n# TYPE %s %s\n%s{%s=\"%s\"} %.6g\n", name, help,
+      name, type, name, label_name, label_value, value));
   out += line;
 }
 
@@ -41,18 +43,22 @@ void appendQuantiles(std::string& out, const char* name, const char* help,
                      std::int64_t p50, std::int64_t p99, std::int64_t p999,
                      std::int64_t maximum) {
   char header[256];
-  std::snprintf(header, sizeof(header), "# HELP %s %s\n# TYPE %s summary\n", name, help,
-                name);
+  static_cast<void>(std::snprintf(header, sizeof(header),
+                                  "# HELP %s %s\n# TYPE %s summary\n", name, help, name));
   out += header;
 
   char line[256];
-  std::snprintf(line, sizeof(line), "%s{quantile=\"0.5\"} %" PRId64 "\n", name, p50);
+  static_cast<void>(
+      std::snprintf(line, sizeof(line), "%s{quantile=\"0.5\"} %" PRId64 "\n", name, p50));
   out += line;
-  std::snprintf(line, sizeof(line), "%s{quantile=\"0.99\"} %" PRId64 "\n", name, p99);
+  static_cast<void>(std::snprintf(line, sizeof(line),
+                                  "%s{quantile=\"0.99\"} %" PRId64 "\n", name, p99));
   out += line;
-  std::snprintf(line, sizeof(line), "%s{quantile=\"0.999\"} %" PRId64 "\n", name, p999);
+  static_cast<void>(std::snprintf(line, sizeof(line),
+                                  "%s{quantile=\"0.999\"} %" PRId64 "\n", name, p999));
   out += line;
-  std::snprintf(line, sizeof(line), "%s_max %" PRId64 "\n", name, maximum);
+  static_cast<void>(
+      std::snprintf(line, sizeof(line), "%s_max %" PRId64 "\n", name, maximum));
   out += line;
 }
 
@@ -134,9 +140,9 @@ std::string renderPrometheus(const RuntimeSnapshot& snapshot, bool snapshot_is_f
   appendLabelled(out, "safeedge_telegrams_total", "Safety telegrams processed", "counter",
                  "result", "accepted", static_cast<double>(snapshot.telegrams_accepted));
   char line[256];
-  std::snprintf(line, sizeof(line),
-                "safeedge_telegrams_total{result=\"rejected\"} %.6g\n",
-                static_cast<double>(snapshot.telegrams_rejected));
+  static_cast<void>(std::snprintf(line, sizeof(line),
+                                  "safeedge_telegrams_total{result=\"rejected\"} %.6g\n",
+                                  static_cast<double>(snapshot.telegrams_rejected)));
   out += line;
 
   appendMetric(out, "safeedge_uptime_seconds", "Time since the runtime started", "gauge",

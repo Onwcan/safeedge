@@ -206,9 +206,10 @@ class SafetyStateMachine {
   void forceFault(FaultReason reason) noexcept;
 
  private:
-  [[nodiscard]] bool unconditionalDemandActive(const SafetyInputs& inputs) const noexcept;
-  [[nodiscard]] FaultReason unconditionalDemandReason(
-      const SafetyInputs& inputs) const noexcept;
+  [[nodiscard]] static bool unconditionalDemandActive(
+      const SafetyInputs& inputs) noexcept;
+  [[nodiscard]] static FaultReason unconditionalDemandReason(
+      const SafetyInputs& inputs) noexcept;
   [[nodiscard]] SafetyOutputs outputsFor(SafetyState state) const noexcept;
 
   void enterSafeTorqueOff(FaultReason reason) noexcept;

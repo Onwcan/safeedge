@@ -27,10 +27,11 @@ no-allocation rule enforced rather than documented.
 | WP-11b | External emergency stop, acknowledgement, timestamped safety signal | **Done** |
 | WP-11c | `opcua` — OPC UA server, in its own process | **Done** |
 
-**214 tests** with the OPC UA component enabled, 210 without, all passing under
-Debug, Release, ASan+UBSan and ThreadSanitizer,
-plus a libFuzzer target on the telegram decoder. The shared-memory tests
-genuinely `fork()` rather than simulating a second process with a thread.
+**211 core tests** pass under Debug, Release, ASan+UBSan and ThreadSanitizer.
+The encrypted OPC UA configuration runs **221 tests**, including six
+encryption-specific cases, plus a libFuzzer target on the telegram decoder. The
+shared-memory tests genuinely `fork()` rather than simulating a second process
+with a thread.
 
 **65 requirements**, every one linked to implementing code and verifying tests,
 with a CI gate that fails on a broken link.
@@ -250,6 +251,15 @@ scripts/format.sh
 
 It pins clang-format 18; a different major version formats differently and CI
 will reject the result.
+
+Validate the workflow definition before pushing as well:
+
+```bash
+actionlint .github/workflows/ci.yml
+```
+
+A YAML error prevents GitHub Actions from creating any jobs, so the workflow
+cannot lint its own broken definition and there will be no job log to inspect.
 
 To see what the executor actually achieves on your machine:
 
@@ -585,7 +595,7 @@ conditions block before the numbers** — that is why the program prints it firs
 - Memory locked:        yes (mlockall)
 - Allocation guard:     installed
 - Virtualised host:     YES
-- Diagnostics:          pthread_setschedparam failed (Operation not permitted)
+- Diagnostics:          pthread_setschedparam failed (errno 1)
 
 | Measurement (ns)       |     min |     p50 |      p99 |     p99.9 |        max |
 |------------------------|---------|---------|----------|-----------|------------|
@@ -621,7 +631,7 @@ provide.
 
 ## Requirements traceability
 
-47 requirements in [`docs/safety-requirements.md`](docs/safety-requirements.md),
+65 requirements in [`docs/safety-requirements.md`](docs/safety-requirements.md),
 each linked to implementing code and verifying tests by source annotations:
 
 ```cpp
@@ -658,8 +668,8 @@ none it could honestly be traced to. [ADR-0007](docs/adr/0007-mechanical-traceab
 | GCC + Clang × Debug + Release, `-Werror` | `-Wconversion` and `-Wold-style-cast` fire on different constructs per compiler |
 | **ThreadSanitizer** | The only gate that validates ADR-0002. TSan models the C++ abstract machine, so it catches ordering bugs x86-64 forgives |
 | ASan + UBSan, `-fno-sanitize-recover=all` | A finding fails the build rather than printing a note |
-| clang-tidy `--warnings-as-errors=*` | Rule set justified per exclusion |
-| clang-format `--dry-run --Werror` | Formatting never reaches review |
+| clang-tidy `--warnings-as-errors=*` | Actionable correctness rules stay blocking; reviewed POSIX-boundary exclusions are justified in [ADR-0011](docs/adr/0011-static-analysis-policy.md) |
+| `scripts/format.sh --check` (clang-format 18) | Formatting never reaches review, and local checks use the same file set as CI |
 | install + downstream consumer compile | The public CMake contract is tested, not assumed |
 | requirements traceability | Every requirement implemented and verified; no dangling or invented ids. Scans the Dockerfile and compose file too, because some requirements are implemented there and nowhere else |
 | container: layers, size, run, stop | Image holds exactly one file, stays inside an 8 MB budget, serves its endpoints hardened, and honours SIGTERM inside 5 s |
@@ -723,4 +733,4 @@ is in this README rather than only in the author's head.
 
 ## Licence
 
-Apache-2.0. 
+Apache-2.0.

@@ -65,6 +65,9 @@ void ExecutorStats::reset() noexcept {
 
 CyclicExecutor::CyclicExecutor(Config config) noexcept : config_(config) {}
 
+// This is intentionally non-const to preserve the installed library's original
+// ABI. Changing only the cv-qualification changes the exported C++ symbol.
+// NOLINTNEXTLINE(readability-make-member-function-const)
 ThreadConfigReport CyclicExecutor::configureCallingThread() noexcept {
   return applyThreadConfig(config_.thread);
 }

@@ -32,14 +32,13 @@ void SafetyStateMachine::forceFault(FaultReason reason) noexcept {
 // @satisfies REQ-SAF-023
 // @satisfies REQ-SAF-024
 // @satisfies REQ-SAF-025
-bool SafetyStateMachine::unconditionalDemandActive(
-    const SafetyInputs& inputs) const noexcept {
+bool SafetyStateMachine::unconditionalDemandActive(const SafetyInputs& inputs) noexcept {
   return inputs.emergency_stop_asserted || !inputs.communication_ok ||
          !inputs.heartbeat_ok;
 }
 
 FaultReason SafetyStateMachine::unconditionalDemandReason(
-    const SafetyInputs& inputs) const noexcept {
+    const SafetyInputs& inputs) noexcept {
   // Ordered by how directly each represents a person in danger. An E-stop is
   // someone's hand on a button; the others are inferred conditions. When more
   // than one is true at once, the one reported should be the one an operator
@@ -72,18 +71,10 @@ SafetyOutputs SafetyStateMachine::outputsFor(SafetyState state) const noexcept {
       break;
 
     case SafetyState::kStopping:
-      // @satisfies REQ-SAF-030
-      // SS1: the drive keeps torque so it can decelerate under control.
-      // Removing torque here would let the load coast, which for a vertical
-      // axis means it falls -- the opposite of safe.
-      outputs.torque_permitted = true;
-      outputs.motion_permitted = false;
-      outputs.speed_limit = 0.0;
-      outputs.brake_engaged = false;
-      break;
-
     case SafetyState::kOperatingStop:
-      // SOS: powered, actively holding position. No commanded motion.
+      // @satisfies REQ-SAF-030
+      // SS1 needs torque to decelerate under control; SOS needs torque to hold
+      // position. Both prohibit commanded motion and leave the brake released.
       outputs.torque_permitted = true;
       outputs.motion_permitted = false;
       outputs.speed_limit = 0.0;

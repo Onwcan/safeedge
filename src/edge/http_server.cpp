@@ -8,7 +8,8 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstring>
+#include <string>
+#include <system_error>
 
 namespace safeedge::edge {
 namespace {
@@ -18,6 +19,11 @@ constexpr std::size_t kMaxRequestBytes = 8192;
 constexpr int kPollIntervalMs = 200;
 /// How long a connection may take to send its request line before being cut.
 constexpr int kRequestTimeoutMs = 2000;
+
+std::string systemError(const char* operation, int error) {
+  return std::string(operation) + ": " +
+         std::error_code(error, std::generic_category()).message();
+}
 
 const char* reasonPhrase(int status) {
   switch (status) {
@@ -63,7 +69,7 @@ bool HttpServer::start(std::uint16_t port) {
 
   listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
   if (listen_fd_ < 0) {
-    error_ = std::string("socket: ") + std::strerror(errno);
+    error_ = systemError("socket", errno);
     return false;
   }
 
@@ -80,13 +86,13 @@ bool HttpServer::start(std::uint16_t port) {
   address.sin_port = htons(port);
 
   if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-    error_ = std::string("bind: ") + std::strerror(errno);
+    error_ = systemError("bind", errno);
     ::close(listen_fd_);
     listen_fd_ = -1;
     return false;
   }
   if (::listen(listen_fd_, 16) != 0) {
-    error_ = std::string("listen: ") + std::strerror(errno);
+    error_ = systemError("listen", errno);
     ::close(listen_fd_);
     listen_fd_ = -1;
     return false;

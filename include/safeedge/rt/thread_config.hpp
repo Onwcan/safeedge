@@ -32,7 +32,7 @@ struct ThreadConfig {
   /// mlockall alone does not help with stack pages that have never been
   /// written -- they are not mapped yet, so there is nothing to lock.
   bool prefault_stack{false};
-  std::size_t prefault_bytes{512 * 1024};
+  std::size_t prefault_bytes{std::size_t{512} * 1024U};
 };
 
 /// What actually happened when the configuration was applied.

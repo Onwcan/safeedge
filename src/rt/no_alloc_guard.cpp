@@ -94,6 +94,7 @@ void reportViolation(std::size_t bytes) noexcept {
   const char* prefix = "\nsafeedge: FATAL -- allocation of ";
   const std::size_t prefix_length = std::strlen(prefix);
   std::memcpy(message, prefix, prefix_length);
+  message[prefix_length] = '\0';
   std::size_t offset = prefix_length;
   appendUnsigned(message, sizeof(message), offset, bytes);
 

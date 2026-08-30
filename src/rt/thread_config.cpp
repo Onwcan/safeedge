@@ -37,8 +37,10 @@ void appendDiagnostic(std::array<char, 512>& buffer, const char* text) noexcept 
 
 void appendErrno(std::array<char, 512>& buffer, const char* prefix, int error) noexcept {
   char line[192];
-  const char* reason = std::strerror(error);
-  std::snprintf(line, sizeof(line), "%s failed (%s)", prefix, reason);
+  // Keep this path allocation-free and thread-safe. The numeric errno remains
+  // unambiguous and can be decoded without calling strerror's shared buffer.
+  static_cast<void>(
+      std::snprintf(line, sizeof(line), "%s failed (errno %d)", prefix, error));
   appendDiagnostic(buffer, line);
 }
 
@@ -165,9 +167,7 @@ ThreadConfigReport applyThreadConfig(const ThreadConfig& config) noexcept {
   }
 
   // --- memory locking ------------------------------------------------------
-  if (!config.lock_memory) {
-    report.memory_locked = true;
-  } else if (::mlockall(MCL_CURRENT | MCL_FUTURE) == 0) {
+  if (!config.lock_memory || ::mlockall(MCL_CURRENT | MCL_FUTURE) == 0) {
     report.memory_locked = true;
   } else {
     appendErrno(report.diagnostics, "mlockall", errno);

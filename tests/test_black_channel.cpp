@@ -196,6 +196,8 @@ TEST(BlackChannel, DetectsAReplayedTelegram) {
 
   EXPECT_EQ(consumer.deliver(telegram, kMillis), ReceiveStatus::kValid);
   EXPECT_EQ(consumer.deliver(telegram, 2 * kMillis), ReceiveStatus::kRepetition);
+  EXPECT_EQ(consumer.payload_size, 0u);
+  EXPECT_EQ(consumer.status, 0u);
   EXPECT_TRUE(consumer.receiver.inSafeState());
   EXPECT_EQ(consumer.receiver.lastFault(), TransmissionFault::kUnintendedRepetition);
   EXPECT_EQ(consumer.receiver.diagnostics().rejected_repetition, 1u);

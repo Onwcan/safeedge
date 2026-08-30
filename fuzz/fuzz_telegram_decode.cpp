@@ -32,6 +32,22 @@ using namespace safeedge::safety;
 const SafetyAddress kAddress{/*source=*/0x0011, /*destination=*/0x2200,
                              /*parameter_signature=*/0xDEADBEEF};
 
+void checkReceiveOutput(ReceiveStatus result, std::span<const std::uint8_t> frame,
+                        std::size_t payload_size) noexcept {
+  if (result == ReceiveStatus::kValid) {
+    // If a frame was accepted, the reported payload size must be consistent
+    // with the frame it came from. An inconsistency here would mean the
+    // consumer is handed a length that does not match the data.
+    if (payload_size + kOverheadBytes != frame.size()) {
+      __builtin_trap();
+    }
+  } else if (payload_size != 0) {
+    // A rejected frame must never leave a payload behind for the caller to
+    // act on.
+    __builtin_trap();
+  }
+}
+
 }  // namespace
 
 // @verifies REQ-SAF-017
@@ -57,25 +73,17 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
   const ReceiveStatus first =
       receiver.receive(frame, now_ns, payload, payload_size, status);
+  // The output metadata belongs to this call and the next receive resets it,
+  // so validate the result before reusing the output arguments.
+  checkReceiveOutput(first, frame, payload_size);
 
   // Feed it a second time. Repetition, latching and the refusal to deliver
   // while latched all need at least two deliveries to exercise, and a
   // single-shot target would never reach them.
-  (void)receiver.receive(frame, now_ns + 1'000'000, payload, payload_size, status);
+  const ReceiveStatus second =
+      receiver.receive(frame, now_ns + 1'000'000, payload, payload_size, status);
+  checkReceiveOutput(second, frame, payload_size);
   (void)receiver.poll(now_ns + 20'000'000);
-
-  if (first == ReceiveStatus::kValid) {
-    // If a frame was accepted, the reported payload size must be consistent
-    // with the frame it came from. An inconsistency here would mean the
-    // consumer is handed a length that does not match the data.
-    if (payload_size + kOverheadBytes != frame.size()) {
-      __builtin_trap();
-    }
-  } else if (payload_size != 0) {
-    // A rejected frame must never leave a payload behind for the caller to
-    // act on.
-    __builtin_trap();
-  }
 
   return 0;
 }

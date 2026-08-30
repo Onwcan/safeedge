@@ -76,7 +76,9 @@ void logEvent(const char* level, const char* message, const char* detail = nullp
                 "\n",
                 static_cast<long long>(now), level, message);
   }
-  std::fflush(stdout);
+  // A failed flush cannot be reported through the same stream; the process
+  // will still continue or terminate according to the event just written.
+  static_cast<void>(std::fflush(stdout));
 }
 
 /// CLOCK_MONOTONIC in nanoseconds.
@@ -93,14 +95,26 @@ std::uint64_t monotonicNanos() noexcept {
          static_cast<std::uint64_t>(ts.tv_nsec);
 }
 
+const char* environmentValue(const char* name) noexcept {
+  // main snapshots every environment setting before it starts any worker
+  // thread. getenv is only unsafe when another thread can mutate the process
+  // environment concurrently.
+  return std::getenv(name);  // NOLINT(concurrency-mt-unsafe)
+}
+
 long environmentLong(const char* name, long fallback) {
-  const char* raw = std::getenv(name);
+  const char* raw = environmentValue(name);
   if (raw == nullptr || *raw == '\0') {
     return fallback;
   }
   char* end = nullptr;
   const long parsed = std::strtol(raw, &end, 10);
   return (end != nullptr && *end == '\0') ? parsed : fallback;
+}
+
+std::string environmentString(const char* name, const char* fallback) {
+  const char* raw = environmentValue(name);
+  return (raw != nullptr && *raw != '\0') ? raw : fallback;
 }
 
 /// Self-contained health probe, so the container image needs no shell.
@@ -169,7 +183,7 @@ int runHealthcheck(std::uint16_t port) {
 /// this input as a request, not as the stop itself.
 class FileFlagWatcher {
  public:
-  enum class Mode {
+  enum class Mode : std::uint8_t {
     /// Presence of the file IS the state. Removing it clears the input.
     /// Used for the emergency stop, which is a condition, not an event.
     kLevel,
@@ -205,7 +219,9 @@ class FileFlagWatcher {
   FileFlagWatcher& operator=(FileFlagWatcher&&) = delete;
 
   /// Level mode: the current state.
-  bool asserted() const noexcept { return asserted_.load(std::memory_order_relaxed); }
+  [[nodiscard]] bool asserted() const noexcept {
+    return asserted_.load(std::memory_order_relaxed);
+  }
 
   /// Latch mode: true once per appearance, and false thereafter.
   bool takeOnce() noexcept {
@@ -256,11 +272,22 @@ int main(int argc, char** argv) {
 
   // Handlers before anything else: a SIGTERM arriving during startup must still
   // be honoured, and as PID 1 there is no default disposition to fall back on.
-  std::signal(SIGTERM, onSignal);
-  std::signal(SIGINT, onSignal);
+  const auto previous_term_handler = std::signal(SIGTERM, onSignal);
+  const auto previous_int_handler = std::signal(SIGINT, onSignal);
+  if (previous_term_handler == SIG_ERR || previous_int_handler == SIG_ERR) {
+    logEvent("fatal", "could not install shutdown signal handlers");
+    return 2;
+  }
 
+  // Snapshot all remaining settings before worker threads start. Healthcheck
+  // mode deliberately never reads these unrelated values.
   const long frequency_hz = environmentLong("SAFEEDGE_FREQUENCY_HZ", 1000);
   const long rt_priority = environmentLong("SAFEEDGE_RT_PRIORITY", 80);
+  const std::string snapshot_shm = environmentString("SAFEEDGE_SNAPSHOT_SHM", "");
+  const std::string estop_path =
+      environmentString("SAFEEDGE_ESTOP_FILE", "/tmp/safeedge-estop");
+  const std::string ack_path =
+      environmentString("SAFEEDGE_ACK_FILE", "/tmp/safeedge-ack");
 
   if (frequency_hz <= 0 || frequency_hz > 100000) {
     logEvent("fatal", "SAFEEDGE_FREQUENCY_HZ out of range");
@@ -302,22 +329,21 @@ int main(int argc, char** argv) {
   ipc::SharedMemoryRegion snapshot_region;
   SnapshotSlot* published = &local_slot;
 
-  const char* snapshot_shm_raw = std::getenv("SAFEEDGE_SNAPSHOT_SHM");
-  if (snapshot_shm_raw != nullptr && *snapshot_shm_raw != '\0') {
+  if (!snapshot_shm.empty()) {
     // A region left by a previous instance holds that instance's last state.
     // Adopting it would mean serving a dead runtime's numbers as though they
     // were current, so it is removed rather than reused.
-    ipc::SharedMemoryRegion::unlinkName(snapshot_shm_raw);
+    ipc::SharedMemoryRegion::unlinkName(snapshot_shm.c_str());
     snapshot_region =
-        ipc::SharedMemoryRegion::create(snapshot_shm_raw, sizeof(SnapshotSlot));
+        ipc::SharedMemoryRegion::create(snapshot_shm.c_str(), sizeof(SnapshotSlot));
     if (snapshot_region.valid()) {
       published = new (snapshot_region.data()) SnapshotSlot();
-      logEvent("info", "publishing snapshot to shared memory", snapshot_shm_raw);
+      logEvent("info", "publishing snapshot to shared memory", snapshot_shm.c_str());
     } else {
       // Reported, not swallowed. A reader waiting on this region would otherwise
       // wait forever with nothing saying why.
       logEvent("warn", "could not create snapshot shared memory; HTTP only",
-               snapshot_shm_raw);
+               snapshot_shm.c_str());
     }
   }
 
@@ -381,11 +407,11 @@ int main(int argc, char** argv) {
       return response;
     }
     char line[128];
-    std::snprintf(
+    static_cast<void>(std::snprintf(
         line, sizeof(line), "%llu %u %llu\n",
         static_cast<unsigned long long>(snapshot.safety_sequence),
         static_cast<unsigned>(snapshot.torque_permitted),
-        static_cast<unsigned long long>(snapshot.safety_transition_monotonic_ns));
+        static_cast<unsigned long long>(snapshot.safety_transition_monotonic_ns)));
     response.body = line;
     return response;
   });
@@ -406,10 +432,6 @@ int main(int argc, char** argv) {
   logEvent("info", "metrics server listening");
 
   // --- emergency stop input ------------------------------------------------
-  const char* estop_path_raw = std::getenv("SAFEEDGE_ESTOP_FILE");
-  const std::string estop_path = (estop_path_raw != nullptr && *estop_path_raw != '\0')
-                                     ? estop_path_raw
-                                     : "/tmp/safeedge-estop";
   FileFlagWatcher estop(estop_path, std::chrono::milliseconds(10),
                         FileFlagWatcher::Mode::kLevel, "emergency stop asserted",
                         "emergency stop cleared");
@@ -423,10 +445,6 @@ int main(int argc, char** argv) {
   // One-shot, because an acknowledge that stayed asserted would clear the latch
   // again on the next cycle, and a fault that cannot stay latched is not
   // latched.
-  const char* ack_path_raw = std::getenv("SAFEEDGE_ACK_FILE");
-  const std::string ack_path = (ack_path_raw != nullptr && *ack_path_raw != '\0')
-                                   ? ack_path_raw
-                                   : "/tmp/safeedge-ack";
   FileFlagWatcher acknowledge(ack_path, std::chrono::milliseconds(10),
                               FileFlagWatcher::Mode::kLatchOnce,
                               "fault acknowledgement received", "");
@@ -559,10 +577,11 @@ int main(int argc, char** argv) {
   edge::RuntimeSnapshot final_snapshot;
   if (published->tryLoad(final_snapshot)) {
     char detail[256];
-    std::snprintf(detail, sizeof(detail),
-                  "cycles=%" PRIu64 " overruns=%" PRIu64 " allocations=%" PRIu64,
-                  final_snapshot.cycles_executed, final_snapshot.overruns,
-                  final_snapshot.allocation_violations);
+    static_cast<void>(
+        std::snprintf(detail, sizeof(detail),
+                      "cycles=%" PRIu64 " overruns=%" PRIu64 " allocations=%" PRIu64,
+                      final_snapshot.cycles_executed, final_snapshot.overruns,
+                      final_snapshot.allocation_violations));
     logEvent("info", "stopped", detail);
   } else {
     logEvent("info", "stopped");

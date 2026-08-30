@@ -79,6 +79,17 @@ for over-aligned or trivially-destructible types. Replacing a subset means a
 replaced `new` can be paired with a default `delete`, which is undefined
 behaviour and typically surfaces as heap corruption under `-O2`.
 
+**ThreadSanitizer remains the allocator in TSan builds.** LLVM's TSan runtime
+provides the same global `new` and `delete` symbols so that it can instrument
+allocations; defining a second family is a link error, while forcing either
+definition to win would make instrumentation depend on link order. In that one
+configuration the guard instead implements TSan's public
+`__sanitizer_malloc_hook`. The hook runs after a successful allocation and calls
+the same allocation-policy code as the normal replacement. `WHOLE_ARCHIVE` and
+the installed flag remain in force, so the tests still detect a missing guard.
+This sanitizer-only path observes a strict superset of the production contract:
+direct malloc-family calls are visible as well as C++ allocations.
+
 ### Policy
 
 - `kAbort` (default) — terminate immediately. Correct for tests and CI.

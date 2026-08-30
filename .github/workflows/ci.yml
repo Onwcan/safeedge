@@ -97,9 +97,10 @@ jobs:
         env: { CC: clang-18, CXX: clang++-18 }
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          # Only .cpp files -- see note above.
-          find src -name '*.cpp' 
-            | xargs clang-tidy-18 -p build --warnings-as-errors='*'
+          # Drive clang-tidy from CMake's database. Optional sources (currently
+          # OPC UA) have no valid command when their component is disabled.
+          python3 -c 'import json, pathlib; root = pathlib.Path("src").resolve(); entries = json.load(open("build/compile_commands.json", encoding="utf-8")); files = sorted({pathlib.Path(entry["file"]).resolve() for entry in entries}); print(*(str(path) for path in files if path.is_relative_to(root)), sep="\n")' \
+            | xargs -r -d '\n' clang-tidy-18 -p build --warnings-as-errors='*'
 
   # Its own job, because it is its own decision.
   #
@@ -220,8 +221,7 @@ jobs:
             assert(cycles == 25);
             assert(exec.stats().allocation_violations == 0);
 
-            std::printf("consumer ok
-");
+            std::printf("consumer ok\n");
             return 0;
           }
           EOT
@@ -346,7 +346,7 @@ jobs:
         run: |
           docker run -d --name smoke -p 9100:9100 \
             --read-only --cap-drop=ALL --security-opt=no-new-privileges safeedge:ci
-          for attempt in $(seq 1 30); do
+          for _ in {1..30}; do
             if curl -sf http://127.0.0.1:9100/healthz > /dev/null; then break; fi
             sleep 1
           done
