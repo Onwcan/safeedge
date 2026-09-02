@@ -1,0 +1,5 @@
+# LF everywhere: a CRLF makes a shell script shebang unparseable, and a Windows
+# checkout with core.autocrlf=true otherwise leaves `scripts/format.sh` with a
+# shebang reading `/usr/bin/env bash\r`. CI never notices, because CI checks out
+# on Linux.
+* text=auto eol=lf
