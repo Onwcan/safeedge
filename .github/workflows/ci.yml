@@ -166,6 +166,22 @@ jobs:
           fi
           echo "encryption is compiled in"
 
+      # Unit tests prove which configurations are refused. They cannot prove
+      # that an untrusted client is turned away, because that happens inside
+      # open62541 during the SecureChannel handshake, between two processes.
+      # This runs the real server against two real clients -- one in the trust
+      # list, one not -- and fails the build if the excluded one gets in.
+      - name: A trust list actually keeps clients out
+        run: bash scripts/demonstrate-client-auth.sh build-opcua build-opcua /tmp/auth-evidence
+
+      - name: Upload client-authentication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opcua-client-authentication
+          path: /tmp/auth-evidence/
+          if-no-files-found: warn
+
   install-consumer:
     name: installed package is consumable
     runs-on: ubuntu-24.04

@@ -226,20 +226,60 @@ There is now one constant, `kApplicationUri`, used to build the certificate and
 to set the application description, so the two cannot drift; a test asserts every
 endpoint advertises it.
 
-### What this is not
+### Client authentication, and a claim this ADR previously got wrong
 
-**Client certificates are accepted without validation, deliberately.** What this
-server protects is the *channel* — traffic cannot be read or altered by others on
-the network. Client certificates would be about *authentication*, and the server
-permits anonymous login, so validating one authenticates nobody. Rejecting a
-self-signed client certificate while waving through an anonymous session is an
-obstacle, not a control.
+An earlier version of this document said client certificates were pointless here
+because the server permits anonymous login, so validating one "authenticates
+nobody". That is wrong, and the mistake is worth keeping visible because it is
+easy to make: it conflates two different things OPC UA authenticates.
 
-Real client authentication needs two things together: a trust list the operator
-populates, and anonymous access turned off. Doing one without the other produces
-a server that looks authenticated and is not. Neither is implemented, and the
-startup log says which posture the server is actually in rather than leaving it
-to be inferred from a clean start.
+A trust list is checked at the **SecureChannel**, against the client's
+*application instance certificate*, before any session exists. A client whose
+certificate is not in it is refused with `BadCertificateUntrusted` and never gets
+as far as offering a user token. Anonymous user tokens are about *which user* is
+behind an application that has already been admitted. So the trust list does
+authenticate — the application — and it does so whether or not anonymous user
+tokens are accepted.
+
+What actually makes a trust list meaningless is a **`SecurityPolicy#None`
+endpoint next to it**. That endpoint needs no certificate at all, so every client
+the trust list was meant to exclude simply connects to the other one, while the
+server goes on reporting that it authenticates clients. That is the pairing that
+produces "looks authenticated and is not", and it is now refused at startup
+rather than documented as a caveat:
+
+- `kTrustList` together with `allow_unencrypted` — refused, because the
+  plaintext endpoint is a way around the list rather than a fallback beside it.
+- `kTrustList` with an empty or unreadable trust list — refused, because
+  checking against nothing has two possible readings, trust everyone and trust
+  no one, and both are worse than saying so at startup.
+
+Setting `SAFEEDGE_OPCUA_TRUSTLIST` is what asks for it; there is no separate
+switch, because a switch without a directory and a directory without a switch
+are both ways of ending up with neither. The startup log states the posture
+either way, and the accept-any default is logged as a **warning** rather than an
+info line — an operator who assumed otherwise should find out from the log
+rather than from an intrusion.
+
+`scripts/demonstrate-client-auth.sh` runs the real server against two real
+clients, one in the trust list and one not, and checks the specific status code
+rather than the word "certificate" — which also appears in the startup line and
+would have made the check unfailable. It carries a negative control: the same
+rejection must *not* appear when no trust list is configured.
+
+### What this is still not
+
+**User authentication.** Anonymous user tokens remain acceptable. For a
+read-only diagnostic view there is nothing to write and nothing secret, and
+turning anonymous off properly means supplying credentials, which is a
+deployment decision this component does not get to invent. It stops being
+defensible the moment anything here is writable, which is why the address space
+has no writable node.
+
+**Server authentication, from the client side.** The probe accepts whatever
+certificate the server presents, and prints a warning saying so on every run.
+Encryption without verification stops eavesdropping and does nothing about an
+impersonator who can answer on the address.
 
 Encryption costs about 4 ms on the subscription path here — a median of 14.0 ms
 against 10.1 ms unencrypted, on the same intervals. Small, real, and worth
@@ -253,12 +293,12 @@ knowing rather than assuming either way.
   is off by default and has its own CI job.
 - Two processes must both be deployed and both be running for the OPC UA view to
   exist. The compose stack starts both.
-- **Security is not addressed.** The server accepts anonymous connections with
-  no encryption, which is appropriate for a read-only view on a trusted cell
-  network and appropriate nowhere else. The daemon logs that at startup rather
-  than leaving it to be discovered. Making it safe to expose means certificates,
-  an AccessControl plugin and a security policy above `None` — a separate piece
-  of work, not a flag.
+- **The channel is encrypted and the door can be locked; the users are not
+  distinguished.** Encrypted policies are the default and `SecurityPolicy#None`
+  has to be asked for. A trust list restricts which client applications may
+  connect. User identity is still anonymous, which is appropriate for a
+  read-only view and appropriate nowhere else; the daemon logs the posture it is
+  in rather than leaving it to be inferred from a clean start.
 - The server is read-only. Nothing in the address space is writable, and the
   runtime takes no input from it. A write path into a safety runtime is a much
   larger decision than an address space.

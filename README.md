@@ -217,13 +217,31 @@ logged `listening`, and *then* the event loop exited with
 `BadCertificateUriInvalid`. Everything up to fatal looked correct. One constant
 now feeds both, and a test asserts every endpoint advertises it.
 
-**What this is not.** Client certificates are accepted without validation, on
-purpose. This protects the *channel*; client certificates would be about
-*authentication*, and the server permits anonymous login, so validating one
-authenticates nobody. Real client authentication needs a trust list **and**
-anonymous turned off — doing one without the other produces a server that looks
-authenticated and is not. The startup log states the posture rather than leaving
-it to be inferred from a clean start.
+**Client authentication, and a claim this README previously got wrong.** It used
+to say client certificates were pointless here because anonymous login is
+permitted, so validating one "authenticates nobody". That conflates two things.
+A trust list is checked at the **SecureChannel**, against the client's
+application certificate, before any session exists — a client not in it is
+refused with `BadCertificateUntrusted` and never gets as far as offering a user
+token. Anonymous is about *which user* is behind an application already admitted.
+
+What actually makes a trust list meaningless is a **`SecurityPolicy#None`
+endpoint beside it**: that one needs no certificate, so every client the list was
+meant to exclude connects to the other endpoint while the server goes on
+reporting that it authenticates. Both that pairing and an empty trust list are
+now **refused at startup** rather than documented as caveats — checking against
+nothing has two readings, trust everyone and trust no one, and both are worse
+than saying so. Set `SAFEEDGE_OPCUA_TRUSTLIST` to enforce it; the accept-any
+default is logged as a *warning*, because an operator who assumed otherwise
+should find out from the log rather than from an intrusion.
+
+`scripts/demonstrate-client-auth.sh` runs the real server against two real
+clients, one trusted and one not, and greps the specific status code rather than
+the word "certificate" — which also appears in the startup line and would have
+made the check unfailable. It carries a negative control: that rejection must
+*not* appear when no trust list is set. What is still not addressed is user
+identity, and the probe's own trust in the server: it accepts whatever
+certificate the server presents and says so on every run.
 
 Encryption costs about **4 ms** on the subscription path — 14.0 ms median
 against 10.1 ms unencrypted, same intervals. Small, real, and measured rather

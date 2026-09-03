@@ -127,12 +127,58 @@ void onTransitionChanged(UA_Client* /*client*/, UA_UInt32 /*subscription_id*/,
   }
 }
 
+/// Reads a whole file into a UA_ByteString, or returns an empty one.
+UA_ByteString readFile(const char* path) {
+  UA_ByteString out = UA_BYTESTRING_NULL;
+  std::FILE* file = std::fopen(path, "rb");
+  if (file == nullptr) {
+    return out;
+  }
+  std::fseek(file, 0, SEEK_END);
+  const long size = std::ftell(file);
+  std::fseek(file, 0, SEEK_SET);
+  if (size <= 0 || UA_ByteString_allocBuffer(&out, static_cast<std::size_t>(size)) !=
+                       UA_STATUSCODE_GOOD) {
+    std::fclose(file);
+    return out;
+  }
+  if (std::fread(out.data, 1, out.length, file) != out.length) {
+    UA_ByteString_clear(&out);
+  }
+  std::fclose(file);
+  return out;
+}
+
+bool writeFile(const std::string& path, const UA_ByteString& bytes) {
+  std::FILE* file = std::fopen(path.c_str(), "wb");
+  if (file == nullptr) {
+    return false;
+  }
+  const std::size_t written = std::fwrite(bytes.data, 1, bytes.length, file);
+  std::fclose(file);
+  return written == bytes.length;
+}
+
+/// Generates this probe's client identity.
+UA_StatusCode createIdentity(UA_ByteString* certificate, UA_ByteString* key) {
+  UA_String subject[3] = {literalString("C=DE"), literalString("O=safeedge"),
+                          literalString("CN=safeedge-opcua-probe")};
+  const std::string alt_uri = std::string("URI:") + kProbeApplicationUri;
+  UA_String subject_alt_name[2] = {literalString("DNS:localhost"),
+                                   literalString(alt_uri.c_str())};
+  return UA_CreateCertificate(UA_Log_Stdout, subject, 3, subject_alt_name, 2,
+                              UA_CERTIFICATEFORMAT_DER, nullptr, key, certificate);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   std::string endpoint = "opc.tcp://127.0.0.1:4840";
   double sampling_ms = 50.0;
   int seconds = 30;
+  std::string cert_path;
+  std::string key_path;
+  std::string write_identity;
   for (int i = 1; i + 1 < argc; i += 2) {
     if (std::strcmp(argv[i], "--endpoint") == 0) {
       endpoint = argv[i + 1];
@@ -140,8 +186,40 @@ int main(int argc, char** argv) {
       sampling_ms = std::atof(argv[i + 1]);
     } else if (std::strcmp(argv[i], "--seconds") == 0) {
       seconds = std::atoi(argv[i + 1]);
+    } else if (std::strcmp(argv[i], "--cert") == 0) {
+      cert_path = argv[i + 1];
+    } else if (std::strcmp(argv[i], "--key") == 0) {
+      key_path = argv[i + 1];
+    } else if (std::strcmp(argv[i], "--write-identity") == 0) {
+      write_identity = argv[i + 1];
     }
   }
+
+#ifdef UA_ENABLE_ENCRYPTION
+  // Generate an identity, write it out, and stop. A trust list can only contain
+  // a certificate that exists before the server starts, and this probe used to
+  // create a fresh one on every run -- which made it precisely the thing a trust
+  // list can never contain.
+  if (!write_identity.empty()) {
+    UA_ByteString certificate = UA_BYTESTRING_NULL;
+    UA_ByteString key = UA_BYTESTRING_NULL;
+    if (createIdentity(&certificate, &key) != UA_STATUSCODE_GOOD) {
+      std::printf("could not create a client certificate\n");
+      return 1;
+    }
+    const bool written = writeFile(write_identity + "/client.der", certificate) &&
+                         writeFile(write_identity + "/client-key.der", key);
+    UA_ByteString_clear(&certificate);
+    UA_ByteString_clear(&key);
+    if (!written) {
+      std::printf("could not write the identity to %s\n", write_identity.c_str());
+      return 1;
+    }
+    std::printf("wrote %s/client.der and %s/client-key.der\n", write_identity.c_str(),
+                write_identity.c_str());
+    return 0;
+  }
+#endif
 
   UA_Client* client = UA_Client_new();
   UA_ClientConfig* client_config = UA_Client_getConfig(client);
@@ -152,14 +230,20 @@ int main(int argc, char** argv) {
   // probe the moment encryption was turned on. A client needs its own identity.
   UA_ByteString client_cert = UA_BYTESTRING_NULL;
   UA_ByteString client_key = UA_BYTESTRING_NULL;
-  UA_String subject[3] = {literalString("C=DE"), literalString("O=safeedge"),
-                          literalString("CN=safeedge-opcua-probe")};
-  const std::string alt_uri = std::string("URI:") + kProbeApplicationUri;
-  UA_String subject_alt_name[2] = {literalString("DNS:localhost"),
-                                   literalString(alt_uri.c_str())};
-  if (UA_CreateCertificate(UA_Log_Stdout, subject, 3, subject_alt_name, 2,
-                           UA_CERTIFICATEFORMAT_DER, nullptr, &client_key,
-                           &client_cert) != UA_STATUSCODE_GOOD) {
+  if (!cert_path.empty() && !key_path.empty()) {
+    // A provisioned identity, so that a server trust list can name it.
+    client_cert = readFile(cert_path.c_str());
+    client_key = readFile(key_path.c_str());
+    if (client_cert.length == 0 || client_key.length == 0) {
+      std::printf("could not read the identity from %s / %s\n", cert_path.c_str(),
+                  key_path.c_str());
+      UA_ByteString_clear(&client_cert);
+      UA_ByteString_clear(&client_key);
+      UA_Client_delete(client);
+      return 1;
+    }
+    std::printf("using the provisioned identity in %s\n", cert_path.c_str());
+  } else if (createIdentity(&client_cert, &client_key) != UA_STATUSCODE_GOOD) {
     std::printf("could not create a client certificate\n");
     UA_Client_delete(client);
     return 1;

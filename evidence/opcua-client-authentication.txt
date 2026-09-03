@@ -1,0 +1,53 @@
+OPC UA client authentication: does the trust list keep anyone out?
+==================================================================
+
+One server, two clients, and one configuration that is refused before
+any client gets the chance.
+
+Trust list holds 1 certificate; a second identity was
+created and deliberately left out of it.
+
+1. Trust list enforced
+----------------------
+  PASS  server reports the posture it is in                  enforcing
+  PASS  client whose certificate is in the trust list        connected
+  PASS  client whose certificate is not                      refused
+  PASS  and refused it as untrusted, specifically            BadCertificateUntrusted
+
+2. No trust list: the same stranger is welcome
+----------------------------------------------
+  PASS  same certificate, no trust list configured           connected
+  PASS  server warned that anyone may connect                warned
+  PASS  no untrusted-certificate rejection without a list    absent
+
+3. Trust list plus a plaintext endpoint: refused outright
+---------------------------------------------------------
+  PASS  server with both refuses to start                    refused
+  PASS  and says why                                         explained
+
+What this does and does not establish
+-------------------------------------
+The trust list authenticates the client APPLICATION, at the
+SecureChannel, before a session exists. That is real access control and
+is what an OPC UA deployment normally relies on.
+
+It says nothing about WHICH USER is behind that application: anonymous
+user tokens are still accepted. For a read-only diagnostic view of a
+safety runtime there is nothing to write and nothing secret, so that is
+defensible -- and it stops being defensible the moment anything here is
+writable, which is why the address space has no writable node.
+
+One thing to expect in the server log: open62541 warns that x509 user
+token authentication is configured without an encrypting policy. It is
+emitted while the configuration is being built, before the unencrypted
+endpoints are dropped, and it is not true of the server that ends up
+running -- the endpoint count in the posture line is the state that
+holds. A warning that was true for a moment is still a warning someone
+has to reason about at three in the morning.
+
+The clients here also still accept whatever certificate the server
+presents. Authentication in this direction is what section 1 measures;
+the other direction needs a trust list on the client, and the probe
+prints a warning on every run saying it does not have one.
+
+All checks held.

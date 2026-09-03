@@ -9,8 +9,11 @@
 #include <open62541/plugin/pki_default.h>
 #endif
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace safeedge::opcua {
@@ -60,6 +63,50 @@ UA_ByteString readFile(const std::string& path) {
   return out;
 }
 
+/// Every `.der` file in `directory`, read into byte strings.
+///
+/// Read in sorted order so the trust list is the same on every start, and so a
+/// log line naming its size means the same thing twice. Sub-directories are not
+/// followed: a trust list is a flat set of anchors, and recursing into whatever
+/// happens to be underneath would make its contents depend on tidiness.
+std::vector<UA_ByteString> readTrustList(const std::string& directory) {
+  std::vector<UA_ByteString> loaded;
+  if (directory.empty()) {
+    return loaded;
+  }
+  std::error_code ec;
+  std::vector<std::filesystem::path> candidates;
+  for (const auto& entry : std::filesystem::directory_iterator(directory, ec)) {
+    if (entry.is_regular_file(ec) && entry.path().extension() == ".der") {
+      candidates.push_back(entry.path());
+    }
+  }
+  if (ec) {
+    return loaded;
+  }
+  std::sort(candidates.begin(), candidates.end());
+  for (const auto& path : candidates) {
+    UA_ByteString bytes = readFile(path.string());
+    if (bytes.length > 0) {
+      loaded.push_back(bytes);
+    } else {
+      // A file that is present but unreadable is not the same as one that is
+      // absent, and silently skipping it would shrink the trust list without
+      // saying so. It is dropped, and the count in the posture is what the
+      // operator compares against what they put there.
+      UA_ByteString_clear(&bytes);
+    }
+  }
+  return loaded;
+}
+
+void clearTrustList(std::vector<UA_ByteString>& list) {
+  for (UA_ByteString& entry : list) {
+    UA_ByteString_clear(&entry);
+  }
+  list.clear();
+}
+
 /// Removes SecurityPolicy#None and every endpoint that uses it.
 ///
 /// open62541 always adds None alongside the encrypted policies. Leaving it in
@@ -96,12 +143,10 @@ bool encryptionAvailable() noexcept {
 #endif
 }
 
-SecurityPosture configureSecurity(UA_ServerConfig* config, std::uint16_t port,
-                                  const std::string& cert_path,
-                                  const std::string& key_path, bool allow_unencrypted,
-                                  bool allow_anonymous) {
+SecurityPosture configureSecurity(UA_ServerConfig* config,
+                                  const SecurityOptions& options) {
   SecurityPosture posture;
-  posture.allows_anonymous = allow_anonymous;
+  posture.authentication = options.authentication;
 
   if (config == nullptr) {
     posture.detail = "no server config";
@@ -109,12 +154,38 @@ SecurityPosture configureSecurity(UA_ServerConfig* config, std::uint16_t port,
   }
 
 #ifdef UA_ENABLE_ENCRYPTION
-  UA_ByteString certificate = readFile(cert_path);
-  UA_ByteString private_key = readFile(key_path);
+  const bool wants_trust_list =
+      options.authentication == ClientAuthentication::kTrustList;
+
+  // Refused before anything is built, because both of these produce a server
+  // that reports itself as authenticating clients and does not.
+  if (wants_trust_list && options.allow_unencrypted) {
+    posture.detail =
+        "a trust list cannot be combined with SecurityPolicy#None: the "
+        "unencrypted endpoint needs no certificate, so it is a way around the "
+        "trust list rather than a fallback beside it";
+    return posture;
+  }
+
+  std::vector<UA_ByteString> trust_list;
+  if (wants_trust_list) {
+    trust_list = readTrustList(options.trust_list_directory);
+    posture.trusted_certificate_count = trust_list.size();
+    if (trust_list.empty()) {
+      posture.detail =
+          "client authentication was requested but no certificates "
+          "were loaded from '" +
+          options.trust_list_directory + "'; checking against nothing is not a policy";
+      return posture;
+    }
+  }
+
+  UA_ByteString certificate = readFile(options.certificate_path);
+  UA_ByteString private_key = readFile(options.key_path);
 
   if (certificate.length > 0 && private_key.length > 0) {
     posture.origin = CertificateOrigin::kLoadedFromFiles;
-    posture.detail = "certificate loaded from " + cert_path;
+    posture.detail = "certificate loaded from " + options.certificate_path;
   } else {
     UA_ByteString_clear(&certificate);
     UA_ByteString_clear(&private_key);
@@ -130,14 +201,16 @@ SecurityPosture configureSecurity(UA_ServerConfig* config, std::uint16_t port,
     if (created != UA_STATUSCODE_GOOD) {
       UA_ByteString_clear(&certificate);
       UA_ByteString_clear(&private_key);
+      clearTrustList(trust_list);
       posture.detail = "could not generate a certificate";
-      if (!allow_unencrypted) {
+      if (!options.allow_unencrypted) {
         // No silent downgrade. Everything would appear to work and the transport
         // would be readable by anyone on the network, which is the one outcome
         // worse than refusing to start.
         return posture;
       }
-      if (UA_ServerConfig_setMinimal(config, port, nullptr) == UA_STATUSCODE_GOOD) {
+      if (UA_ServerConfig_setMinimal(config, options.port, nullptr) ==
+          UA_STATUSCODE_GOOD) {
         posture.policy_count = config->securityPoliciesSize;
         posture.allows_unencrypted = true;
       }
@@ -149,10 +222,16 @@ SecurityPosture configureSecurity(UA_ServerConfig* config, std::uint16_t port,
         "after every restart";
   }
 
+  // Passing the trust list here rather than overriding afterwards: this call
+  // installs it into both secureChannelPKI and sessionPKI, and getting only one
+  // of them is a distinction nothing later would reveal.
   const UA_StatusCode configured = UA_ServerConfig_setDefaultWithSecurityPolicies(
-      config, port, &certificate, &private_key, nullptr, 0, nullptr, 0, nullptr, 0);
+      config, options.port, &certificate, &private_key,
+      trust_list.empty() ? nullptr : trust_list.data(), trust_list.size(), nullptr, 0,
+      nullptr, 0);
   UA_ByteString_clear(&certificate);
   UA_ByteString_clear(&private_key);
+  clearTrustList(trust_list);
 
   if (configured != UA_STATUSCODE_GOOD) {
     posture.origin = CertificateOrigin::kNone;
@@ -170,56 +249,47 @@ SecurityPosture configureSecurity(UA_ServerConfig* config, std::uint16_t port,
     config->endpoints[i].server.applicationUri = UA_STRING_ALLOC(kApplicationUri);
   }
 
-  // The server accepts any client certificate, and that is a decision worth
-  // stating rather than a default worth hiding.
-  //
-  // What this server is protecting is the *channel*: with an encrypted policy,
-  // traffic cannot be read or altered by anyone else on the network. Client
-  // certificates would be about *authentication* -- deciding who is allowed to
-  // ask -- and this server already permits anonymous login, so validating the
-  // certificate authenticates nobody. Rejecting a self-signed client cert while
-  // waving through an anonymous session is an obstacle, not a control.
-  //
-  // Real client authentication means two things together, and neither is here:
-  // a trust list the operator populates, and anonymous access turned off. Doing
-  // one without the other produces a server that looks authenticated and is not.
-  UA_CertificateVerification_AcceptAll(&config->secureChannelPKI);
-  UA_CertificateVerification_AcceptAll(&config->sessionPKI);
-  posture.detail +=
-      "; any client certificate accepted (anonymous is permitted, so "
-      "validating one would authenticate nobody)";
+  if (wants_trust_list) {
+    posture.detail += "; " + std::to_string(posture.trusted_certificate_count) +
+                      " trusted client certificate(s) loaded from " +
+                      options.trust_list_directory;
+  } else {
+    // Accepting any client certificate is a decision worth stating rather than
+    // a default worth hiding. What the server still protects is the *channel*:
+    // with an encrypted policy, traffic cannot be read or altered by anyone
+    // else on the network. What it does not do is decide who is allowed to ask
+    // -- anyone who can reach the port can connect.
+    UA_CertificateVerification_AcceptAll(&config->secureChannelPKI);
+    UA_CertificateVerification_AcceptAll(&config->sessionPKI);
+    posture.detail += "; any client certificate accepted";
+  }
 
-  if (!allow_unencrypted) {
+  if (!options.allow_unencrypted) {
     const std::size_t removed = dropUnencryptedEndpoints(config);
     posture.detail += "; dropped " + std::to_string(removed) + " unencrypted endpoint(s)";
   }
   posture.policy_count = config->securityPoliciesSize;
-  posture.allows_unencrypted = allow_unencrypted;
+  posture.allows_unencrypted = options.allow_unencrypted;
 
-  // Anonymous access is separate from encryption and is worth keeping separate.
-  // Encryption says nobody can read or forge the traffic; it says nothing about
-  // who is allowed to ask. For a read-only diagnostic view of a safety runtime
-  // on a cell network, anonymous is defensible -- there is nothing to write and
-  // nothing secret. It stops being defensible the moment anything here is
-  // writable, which is why the address space has no writable node.
-  if (!allow_anonymous && config->accessControl.clear != nullptr) {
-    // open62541's default AccessControl is built with anonymous enabled. Turning
-    // it off properly means supplying credentials, which is a deployment
-    // decision this component does not get to invent -- so it refuses rather
-    // than pretending.
-    posture.detail += "; anonymous cannot be disabled without configured credentials";
-    posture.allows_anonymous = true;
-  }
+  // Anonymous user tokens are a separate question from who may open a channel,
+  // and the trust list above does not answer it. For a read-only diagnostic
+  // view there is nothing to write and nothing secret, so anonymous is
+  // defensible; turning it off properly means supplying credentials, which is a
+  // deployment decision this component does not get to invent.
+  posture.allows_anonymous = true;
   return posture;
 #else
-  (void)cert_path;
-  (void)key_path;
-  (void)allow_anonymous;
-  if (!allow_unencrypted) {
+  if (options.authentication == ClientAuthentication::kTrustList) {
+    posture.detail =
+        "client authentication needs a crypto backend, and this "
+        "build has none";
+    return posture;
+  }
+  if (!options.allow_unencrypted) {
     posture.detail = "built without a crypto backend and unencrypted use not permitted";
     return posture;
   }
-  if (UA_ServerConfig_setMinimal(config, port, nullptr) == UA_STATUSCODE_GOOD) {
+  if (UA_ServerConfig_setMinimal(config, options.port, nullptr) == UA_STATUSCODE_GOOD) {
     posture.policy_count = config->securityPoliciesSize;
     posture.allows_unencrypted = true;
     posture.detail = "built without a crypto backend";

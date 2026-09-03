@@ -121,12 +121,20 @@ int main() {
 
   // Unencrypted operation is opt-in and loud. The default is a server that
   // either has a certificate or does not start.
-  const bool allow_unencrypted = environmentLong("SAFEEDGE_OPCUA_INSECURE", 0) != 0;
-  const std::string cert_path = environmentString("SAFEEDGE_OPCUA_CERT", "");
-  const std::string key_path = environmentString("SAFEEDGE_OPCUA_KEY", "");
+  opcua::SecurityOptions security;
+  security.port = port;
+  security.allow_unencrypted = environmentLong("SAFEEDGE_OPCUA_INSECURE", 0) != 0;
+  security.certificate_path = environmentString("SAFEEDGE_OPCUA_CERT", "");
+  security.key_path = environmentString("SAFEEDGE_OPCUA_KEY", "");
+  // Setting a trust list directory is what asks for client authentication.
+  // There is no separate switch, because a switch without a directory and a
+  // directory without a switch are both ways of ending up with neither.
+  security.trust_list_directory = environmentString("SAFEEDGE_OPCUA_TRUSTLIST", "");
+  security.authentication = security.trust_list_directory.empty()
+                                ? opcua::ClientAuthentication::kAcceptAnyCertificate
+                                : opcua::ClientAuthentication::kTrustList;
 
-  const opcua::SecurityPosture posture = opcua::configureSecurity(
-      config, port, cert_path, key_path, allow_unencrypted, /*allow_anonymous=*/true);
+  const opcua::SecurityPosture posture = opcua::configureSecurity(config, security);
 
   if (posture.policy_count == 0) {
     logEvent("fatal", "could not configure security", posture.detail.c_str());
@@ -153,6 +161,20 @@ int main() {
              "SecurityPolicy#None is offered: traffic can be read and forged by "
              "anyone on this network",
              nullptr);
+  }
+  switch (posture.authentication) {
+    case opcua::ClientAuthentication::kTrustList:
+      logEvent("info", "client certificates are checked against the trust list", nullptr);
+      break;
+    case opcua::ClientAuthentication::kAcceptAnyCertificate:
+      // Not an error, and not a detail to leave in a struct nobody reads. The
+      // channel is encrypted; who may open one is not restricted, and an
+      // operator who assumed otherwise should find out here.
+      logEvent("warn",
+               "any client certificate is accepted: set SAFEEDGE_OPCUA_TRUSTLIST "
+               "to restrict who may connect",
+               nullptr);
+      break;
   }
 
   // A client cannot subscribe faster than the server permits, and the defaults
