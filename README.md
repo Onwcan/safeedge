@@ -243,6 +243,36 @@ made the check unfailable. It carries a negative control: that rejection must
 identity, and the probe's own trust in the server: it accepts whatever
 certificate the server presents and says so on every run.
 
+**A subscription on a variable delivers samples, not changes.** The server reads
+the node every `samplingInterval` and reports it when it differs from last time,
+so a state that begins and ends between two reads is absent rather than late —
+the client has no way to learn it existed. The server therefore also raises a
+`SafetyTransitionEventType` event on every transition. Measured with both
+subscriptions in **one client session against one server**, twelve transitions
+in states lasting 100 ms with the client sampling at 500 ms:
+
+| | delivered |
+|---|---|
+| events | **12 of 12** |
+| data-change notifications | **4** |
+| coalesced by the server | 0 |
+
+Events are usually sold as a latency optimisation. Both subscriptions here share
+one publishing interval, so the events arrive no sooner — what differs is how
+many arrive at all. The difference is **correctness**, and the latency is the
+same.
+
+Three limits, stated rather than implied. An event queue overflows too: it is
+lossless up to the depth the client asked for, which is weaker than lossless and
+stronger than anything a sampler can promise. The chain is only as event-driven
+as its most sampled link — this server reads its own snapshot on a poll, so a
+transition shorter than that never reaches OPC UA at all. And that case is
+*reported*: the snapshot carries a transition counter, so when it advances by
+more than one the server puts the gap in `MissedTransitions` rather than
+presenting the newest state as the whole story. Same argument as `BadNoData` on
+a stale variable — the absence of information has to be representable, or it
+gets read as permission.
+
 Encryption costs about **4 ms** on the subscription path — 14.0 ms median
 against 10.1 ms unencrypted, same intervals. Small, real, and measured rather
 than assumed in either direction.

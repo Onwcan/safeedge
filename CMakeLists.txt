@@ -273,7 +273,10 @@ if(SAFEEDGE_BUILD_OPCUA)
   get_target_property(SAFEEDGE_UA_INCLUDES open62541::open62541
                       INTERFACE_INCLUDE_DIRECTORIES)
 
-  add_library(safeedge_opcua src/opcua/address_space.cpp src/opcua/security.cpp)
+  add_library(safeedge_opcua
+    src/opcua/address_space.cpp
+    src/opcua/events.cpp
+    src/opcua/security.cpp)
   add_library(safeedge::opcua ALIAS safeedge_opcua)
   if(SAFEEDGE_UA_INCLUDES)
     target_include_directories(safeedge_opcua SYSTEM PUBLIC ${SAFEEDGE_UA_INCLUDES})

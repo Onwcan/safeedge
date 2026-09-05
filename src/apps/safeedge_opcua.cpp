@@ -42,6 +42,7 @@
 #include "safeedge/ipc/seqlock_slot.hpp"
 #include "safeedge/ipc/shared_memory.hpp"
 #include "safeedge/opcua/address_space.hpp"
+#include "safeedge/opcua/events.hpp"
 #include "safeedge/opcua/security.hpp"
 
 namespace {
@@ -211,16 +212,43 @@ int main() {
     UA_Server_delete(server);
     return 3;
   }
+  if (!opcua::buildEventType(server)) {
+    logEvent("fatal", "could not build the safety event type");
+    UA_Server_delete(server);
+    return 3;
+  }
   logEvent("info", "address space ready");
 
   // Run the server on its own thread so the publishing loop is not at the mercy
   // of the protocol stack's iteration timing, and vice versa.
   std::atomic<bool> running{true};
   std::thread publisher([&] {
+    // Seeded from the first snapshot rather than from zero, so starting the
+    // server against a runtime that has already tripped a few times does not
+    // announce those transitions as though they had just happened.
+    bool have_sequence = false;
+    std::uint64_t last_sequence = 0;
+
     while (running.load(std::memory_order_relaxed)) {
       edge::RuntimeSnapshot snapshot;
       const bool fresh = slot->tryLoad(snapshot);
       opcua::publishSnapshot(server, snapshot, fresh);
+
+      if (fresh) {
+        if (!have_sequence) {
+          last_sequence = snapshot.safety_sequence;
+          have_sequence = true;
+        } else if (snapshot.safety_sequence != last_sequence) {
+          const opcua::SafetyTransitionEvent event =
+              opcua::describeTransition(snapshot, last_sequence);
+          last_sequence = snapshot.safety_sequence;
+          if (!opcua::fireSafetyTransition(server, event)) {
+            // Logged and carried on. A missed event is bad; stopping a safety
+            // runtime's diagnostic view because of one is worse.
+            logEvent("warn", "could not fire a safety transition event");
+          }
+        }
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(publish_ms));
     }
   });

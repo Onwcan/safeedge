@@ -34,8 +34,10 @@
 #include <open62541/plugin/create_certificate.h>
 #include <open62541/plugin/log_stdout.h>
 #include <open62541/plugin/pki_default.h>
+#include <open62541/types.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -45,6 +47,7 @@
 #include <vector>
 
 #include "safeedge/opcua/address_space.hpp"
+#include "safeedge/opcua/events.hpp"
 #include "safeedge/opcua/security.hpp"
 
 namespace {
@@ -127,6 +130,77 @@ void onTransitionChanged(UA_Client* /*client*/, UA_UInt32 /*subscription_id*/,
   }
 }
 
+// ---------------------------------------------------------------------------
+// The event subscription, for comparison with the sampled variable above
+// ---------------------------------------------------------------------------
+
+/// Fields requested from each event, in the order the callback receives them.
+enum EventField : std::size_t {
+  kFieldTransitionNs = 0,
+  kFieldSequence,
+  kFieldMissed,
+  kFieldSeverity,
+  kFieldCount,
+};
+
+std::vector<std::uint64_t> g_event_latencies;
+std::uint64_t g_events_received = 0;
+std::uint64_t g_events_coalesced_by_server = 0;
+
+void onSafetyEvent(UA_Client* /*client*/, UA_UInt32 /*subscription_id*/,
+                   void* /*subscription_context*/, UA_UInt32 /*monitored_id*/,
+                   void* /*monitored_context*/, std::size_t field_count,
+                   UA_Variant* fields) {
+  if (field_count < kFieldCount) {
+    return;
+  }
+  ++g_events_received;
+
+  if (UA_Variant_hasScalarType(&fields[kFieldMissed], &UA_TYPES[UA_TYPES_UINT64])) {
+    g_events_coalesced_by_server += *static_cast<UA_UInt64*>(fields[kFieldMissed].data);
+  }
+  if (!UA_Variant_hasScalarType(&fields[kFieldTransitionNs], &UA_TYPES[UA_TYPES_INT64])) {
+    return;
+  }
+
+  const auto transition = static_cast<std::uint64_t>(
+      *static_cast<UA_Int64*>(fields[kFieldTransitionNs].data));
+  const std::uint64_t now = monotonicNanos();
+  std::uint64_t sequence = 0;
+  if (UA_Variant_hasScalarType(&fields[kFieldSequence], &UA_TYPES[UA_TYPES_UINT64])) {
+    sequence = *static_cast<UA_UInt64*>(fields[kFieldSequence].data);
+  }
+
+  // No initial notification to discard here, unlike the variable subscription:
+  // an event is delivered because it happened, so there is no opening report of
+  // current state to mistake for one.
+  if (transition > 0 && now > transition) {
+    g_event_latencies.push_back(now - transition);
+    std::printf("  event %2zu: seq %llu, %8.3f ms after the runtime decided%s\n",
+                g_event_latencies.size(), static_cast<unsigned long long>(sequence),
+                static_cast<double>(now - transition) / 1e6,
+                g_events_coalesced_by_server > 0 ? " (server coalesced some)" : "");
+    std::fflush(stdout);
+  }
+}
+
+/// One field of the event, named by its browse path.
+UA_SimpleAttributeOperand makeSelectClause(UA_QualifiedName* storage, UA_UInt16 ns,
+                                           const char* field) {
+  UA_SimpleAttributeOperand clause;
+  UA_SimpleAttributeOperand_init(&clause);
+  // BaseEventType rather than the safeedge type: a select clause names the type
+  // the field is looked up on, and using the derived type would make the whole
+  // subscription fail on a server that does not have it, instead of returning
+  // an empty field for the parts it does not know.
+  clause.typeDefinitionId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE);
+  clause.attributeId = UA_ATTRIBUTEID_VALUE;
+  *storage = UA_QUALIFIEDNAME_ALLOC(ns, field);
+  clause.browsePathSize = 1;
+  clause.browsePath = storage;
+  return clause;
+}
+
 /// Reads a whole file into a UA_ByteString, or returns an empty one.
 UA_ByteString readFile(const char* path) {
   UA_ByteString out = UA_BYTESTRING_NULL;
@@ -179,6 +253,7 @@ int main(int argc, char** argv) {
   std::string cert_path;
   std::string key_path;
   std::string write_identity;
+  bool subscribe_events = false;
   for (int i = 1; i + 1 < argc; i += 2) {
     if (std::strcmp(argv[i], "--endpoint") == 0) {
       endpoint = argv[i + 1];
@@ -192,6 +267,11 @@ int main(int argc, char** argv) {
       key_path = argv[i + 1];
     } else if (std::strcmp(argv[i], "--write-identity") == 0) {
       write_identity = argv[i + 1];
+    }
+  }
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--events") == 0) {
+      subscribe_events = true;
     }
   }
 
@@ -348,6 +428,63 @@ int main(int argc, char** argv) {
                 sampling_ms, revised_sampling);
   }
 
+  // The event subscription, alongside the variable one and in the same session.
+  //
+  // Both paths therefore see exactly the same transitions on exactly the same
+  // server, so a difference in what they report is a difference between the two
+  // mechanisms and not between two runs of a machine.
+  if (subscribe_events) {
+    std::array<UA_QualifiedName, kFieldCount> names{};
+    std::array<UA_SimpleAttributeOperand, kFieldCount> clauses{
+        makeSelectClause(&names[kFieldTransitionNs], namespace_index,
+                         "TransitionMonotonicNanoseconds"),
+        makeSelectClause(&names[kFieldSequence], namespace_index, "SafetySequence"),
+        makeSelectClause(&names[kFieldMissed], namespace_index, "MissedTransitions"),
+        makeSelectClause(&names[kFieldSeverity], 0, "Severity"),
+    };
+
+    UA_EventFilter filter;
+    UA_EventFilter_init(&filter);
+    filter.selectClauses = clauses.data();
+    filter.selectClausesSize = clauses.size();
+
+    // Subscribing to the Server object, which carries the EventNotifier
+    // attribute. A client that knows nothing about this address space can reach
+    // it, which is the point of an event over a bespoke variable.
+    UA_MonitoredItemCreateRequest event_item;
+    UA_MonitoredItemCreateRequest_init(&event_item);
+    event_item.itemToMonitor.nodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER);
+    event_item.itemToMonitor.attributeId = UA_ATTRIBUTEID_EVENTNOTIFIER;
+    event_item.monitoringMode = UA_MONITORINGMODE_REPORTING;
+    event_item.requestedParameters.filter.encoding = UA_EXTENSIONOBJECT_DECODED_NODELETE;
+    event_item.requestedParameters.filter.content.decoded.data = &filter;
+    event_item.requestedParameters.filter.content.decoded.type =
+        &UA_TYPES[UA_TYPES_EVENTFILTER];
+    // A queue, because an event subscription is lossless only up to the depth
+    // the client asked for. Discarding the newest rather than the oldest: for a
+    // safety log the first thing that went wrong is worth more than the most
+    // recent, and either way the client should know which end it is losing.
+    event_item.requestedParameters.queueSize = 64;
+    event_item.requestedParameters.discardOldest = false;
+
+    const UA_MonitoredItemCreateResult event_monitored =
+        UA_Client_MonitoredItems_createEvent(client, subscription.subscriptionId,
+                                             UA_TIMESTAMPSTORETURN_BOTH, event_item,
+                                             nullptr, onSafetyEvent, nullptr);
+    for (UA_QualifiedName& name : names) {
+      UA_QualifiedName_clear(&name);
+    }
+    if (event_monitored.statusCode != UA_STATUSCODE_GOOD) {
+      std::printf("could not subscribe to safety events: %s\n",
+                  UA_StatusCode_name(event_monitored.statusCode));
+      UA_Client_disconnect(client);
+      UA_Client_delete(client);
+      return 5;
+    }
+    std::printf("also subscribed to %s events (queue 64)\n",
+                safeedge::opcua::kSafetyEventTypeName);
+  }
+
   std::printf(
       "subscribed: publishing %.0f ms, sampling %.0f ms -- as revised by the\n"
       "server, not as requested. Trip the runtime to produce notifications:\n"
@@ -399,6 +536,29 @@ int main(int argc, char** argv) {
         "is the *client's* poll; the server-side intervals remain, and they are\n"
         "somebody's configuration rather than a property of the protocol.\n");
   }
+  if (subscribe_events) {
+    std::printf("\n");
+    if (g_event_latencies.empty()) {
+      std::printf("no safety events received\n");
+    } else {
+      std::sort(g_event_latencies.begin(), g_event_latencies.end());
+      const auto ms = [](std::uint64_t ns) { return static_cast<double>(ns) / 1e6; };
+      std::printf("events: n=%zu   min %.1f ms   median %.1f ms   max %.1f ms\n",
+                  g_event_latencies.size(), ms(g_event_latencies.front()),
+                  ms(g_event_latencies[g_event_latencies.size() / 2]),
+                  ms(g_event_latencies.back()));
+    }
+    // The count is the interesting column, not the latency. Both subscriptions
+    // ran in this session against the same transitions, so a variable that
+    // reported fewer did not report them late -- it did not report them.
+    std::printf(
+        "counts: %zu data-change notification(s), %llu event(s)\n"
+        "        %llu transition(s) the SERVER itself coalesced between snapshot\n"
+        "        reads, which no subscription of either kind could recover.\n",
+        g_latencies.size(), static_cast<unsigned long long>(g_events_received),
+        static_cast<unsigned long long>(g_events_coalesced_by_server));
+  }
+
   if (g_saw_bad_status) {
     std::printf(
         "\nAt least one notification carried a bad status: the server could not\n"

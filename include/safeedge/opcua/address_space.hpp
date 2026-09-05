@@ -55,7 +55,19 @@ enum class NodeNumber : std::uint32_t {
   kRealtimeSchedulingGranted = 1014,
   kUptimeSeconds = 1015,
 
-  // Next free: 1009 in the safety block, 1016 overall. Nothing below is ever reused.
+  // --- Event type and its fields ------------------------------------------
+  // A separate block, one authority. Two enums numbering nodes in the same
+  // namespace is how a collision gets introduced by someone who only read one
+  // of them.
+  kSafetyTransitionEventType = 1100,
+  kEventTransitionMonotonicNs = 1101,
+  kEventSafetySequence = 1102,
+  kEventTorquePermitted = 1103,
+  kEventSafetyState = 1104,
+  kEventMissedTransitions = 1105,
+
+  // Next free: 1009 in the safety block, 1016 in the variables block, 1106 in
+  // the event block. Nothing above is ever reused.
 };
 
 /// Creates the SafeEdgeRuntime object and its variables.

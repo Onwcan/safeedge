@@ -285,6 +285,79 @@ Encryption costs about 4 ms on the subscription path here — a median of 14.0 m
 against 10.1 ms unencrypted, on the same intervals. Small, real, and worth
 knowing rather than assuming either way.
 
+## Events, and what a subscription on a variable actually delivers
+
+A client subscribed to a variable does not receive changes. It receives
+**samples**: the server reads the node every `samplingInterval` and reports the
+value when it differs from the one it read last time. A state that begins and
+ends between two reads is not delayed and not merged — it is absent, and the
+client has no way to learn it existed.
+
+For a diagnostic gauge that is a fair trade. For "the machine tripped and
+recovered" it is the difference between a log and a fiction, so the server also
+raises a `SafetyTransitionEventType` event on every transition. Events are
+queued when triggered rather than read on a timer.
+
+Measured with both subscriptions in one client session against one server, so
+the two see identical transitions —
+`scripts/demonstrate-events-vs-sampling.sh`, twelve transitions in states
+lasting 100 ms, client sampling at 500 ms:
+
+| | delivered |
+|---|---|
+| events | **12 of 12** |
+| data-change notifications | **4** |
+| coalesced by the server | 0 |
+
+The usual framing has this backwards. Events are described as a latency
+optimisation; both subscriptions here share one publishing interval, so the
+events arrive no sooner than the samples do. What differs is how many arrive at
+all. **The difference is correctness, and the latency is the same.**
+
+### Three limits, stated rather than implied
+
+**An event queue overflows too.** It is lossless up to the depth the client
+requested — this probe asks for 64 and discards the *newest*, because for a
+safety log the first thing that went wrong is worth more than the most recent.
+Lossless-up-to-a-depth is a weaker promise than lossless and a stronger one than
+a sampler can make at any depth.
+
+**The chain is only as event-driven as its most sampled link.** This server
+reads its own snapshot on a poll, so a transition shorter than
+`SAFEEDGE_OPCUA_PUBLISH_MS` never reaches OPC UA at all. That is not fixed by
+using events; it is *upstream* of them.
+
+**So that case is reported rather than hidden.** The snapshot carries a
+transition counter. When it advances by more than one between reads, the server
+knows how many transitions it coalesced even though it cannot recover them, and
+puts the number in `MissedTransitions` instead of presenting the newest state as
+though it were the only one. A client can then tell "I have the whole story"
+from "I have the current state". It is the same argument as `BadNoData` on a
+stale variable and `UNSPECIFIED`-at-zero in the protobuf contracts: the absence
+of information must be representable, or it gets read as permission.
+
+### Alarms & Conditions is not enabled
+
+open62541 ships `UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS` as an experimental
+option, and it would map neatly onto what this runtime already does — a
+`ConditionType` with acknowledgement is very close to the e-stop latch that
+requires an explicit acknowledge before torque returns. It is off. Plain events
+derived from `BaseEventType` are what a generic client subscribes to without
+knowing anything about this address space, and they are enough for the claim
+being made here. Turning on an experimental branch of a protocol stack to model
+a state machine that already works is a decision that needs a reason beyond
+neatness.
+
+### A namespace mistake worth keeping
+
+The fields declared on this event type live in the server's own namespace. The
+inherited ones — `Severity`, `Message`, and the rest of `BaseEventType` — live
+in namespace 0. Writing an inherited field under the server's own index names a
+property that does not exist, and the write fails: the event goes out without
+the two fields a generic client actually reads, while every field this server
+defined is present and correct. It is the same class of error as assuming a
+namespace index instead of resolving it, and it fails in the same quiet way.
+
 ## Consequences
 
 - `safeedged` is unchanged in size, dependencies and image contents.

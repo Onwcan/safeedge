@@ -174,11 +174,21 @@ jobs:
       - name: A trust list actually keeps clients out
         run: bash scripts/demonstrate-client-auth.sh build-opcua build-opcua /tmp/auth-evidence
 
-      - name: Upload client-authentication evidence
+      # The claim that events carry transitions a sampled variable cannot. Both
+      # subscriptions run in one client session against one server, so a
+      # difference in what they report is a difference between the mechanisms
+      # rather than between two runs of a machine. The script also asserts the
+      # server itself coalesced nothing, because if it had, both subscriptions
+      # would have lost the same transitions for the same reason and the
+      # comparison would be measuring the wrong thing.
+      - name: Events carry what a sampled variable drops
+        run: bash scripts/demonstrate-events-vs-sampling.sh build-opcua build-opcua /tmp/auth-evidence
+
+      - name: Upload OPC UA integration evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: opcua-client-authentication
+          name: opcua-integration-evidence
           path: /tmp/auth-evidence/
           if-no-files-found: warn
 

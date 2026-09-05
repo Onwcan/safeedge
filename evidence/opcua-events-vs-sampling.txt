@@ -1,0 +1,44 @@
+OPC UA events versus a sampled variable
+=======================================
+
+One server, one client session, two subscriptions. The runtime was made
+to change safety state 12 times (6 trip/acknowledge cycles, two
+transitions each -- releasing the e-stop is not one, which is the latch
+doing its job), in states lasting 100 ms, run back to back.
+
+  server snapshot poll   10 ms   (so the server sees every transition)
+  client sampling        500 ms   (so the client cannot)
+
+  transitions produced          12
+  events received               12
+  data-change notifications     4
+  coalesced by the server       0
+
+  PASS  every transition arrived as an event               12 of 12
+  PASS  the sampled variable reported fewer                4 vs 12
+  PASS  the server itself missed nothing                   0 coalesced
+
+What this is and is not
+-----------------------
+It is not a latency result. Both subscriptions here share one publishing
+interval, so the events arrive no sooner than the samples do. What
+differs is how many arrive at all: a sampled variable reports the value
+it happens to read, so a state that begins and ends between two reads
+was never there. The usual framing of events as an optimisation has this
+backwards -- the difference is correctness, and the latency is the same.
+
+An event queue can overflow too. This client asked for 64 and discards
+the newest rather than the oldest, because for a safety log the first
+thing that went wrong is worth more than the most recent one. Lossless
+up to the depth you asked for is a weaker promise than lossless, and a
+stronger one than a sampler can make at any depth.
+
+And the chain is only as event-driven as its most sampled link. This
+server reads its snapshot on a poll, so a transition shorter than
+10 ms never reaches OPC UA at all. That case is detectable rather
+than silent: the snapshot carries a transition counter, and when it
+advances by more than one the server reports the gap in
+MissedTransitions instead of presenting the newest state as the whole
+story.
+
+All checks held.
