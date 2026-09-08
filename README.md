@@ -23,15 +23,14 @@ no-allocation rule enforced rather than documented.
 | WP-09c | Requirements traceability, FMEA, CI gate | **Done** |
 | WP-10 | `ipc` — zero-copy shared-memory transport | **Done** |
 | WP-11 | `edge` — container packaging, metrics, dashboard | **Done** |
-
 | WP-11b | External emergency stop, acknowledgement, timestamped safety signal | **Done** |
 | WP-11c | `opcua` — OPC UA server, in its own process | **Done** |
 
 **211 core tests** pass under Debug, Release, ASan+UBSan and ThreadSanitizer.
-The encrypted OPC UA configuration runs **221 tests**, including six
-encryption-specific cases, plus a libFuzzer target on the telegram decoder. The
-shared-memory tests genuinely `fork()` rather than simulating a second process
-with a thread.
+The encrypted OPC UA configuration adds twenty-two more for **233 tests** — ten
+on the security posture, eight on transition events, four on the address space
+— plus a libFuzzer target on the telegram decoder. The shared-memory tests
+genuinely `fork()` rather than simulating a second process with a thread.
 
 **65 requirements**, every one linked to implementing code and verifying tests,
 with a CI gate that fails on a broken link.
