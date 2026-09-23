@@ -267,6 +267,21 @@ rather than the word "certificate" — which also appears in the startup line an
 would have made the check unfailable. It carries a negative control: the same
 rejection must *not* appear when no trust list is configured.
 
+### Server authentication in the probe
+
+The probe requires `--trust-list DIR`, containing DER-encoded trusted server
+certificates, and refuses missing or unusable trust material. Its channel must
+use SignAndEncrypt. A successful connection reports its negotiated
+SecurityPolicy, security mode and whether server certificate verification was
+enabled. Trust should be provisioned before connecting, using a stable server
+certificate supplied through `SAFEEDGE_OPCUA_CERT` / `SAFEEDGE_OPCUA_KEY`.
+
+`--insecure-accept-any-server-cert` preserves the demonstration behavior as an
+explicit opt-in. Only this path warns that any server certificate is accepted;
+it still requires encryption. The local demonstration scripts select this path
+because they generate temporary server identities. Connection tests exercise
+both a trusted server and a server absent from the client's trust list.
+
 ### What this is still not
 
 **User authentication.** Anonymous user tokens remain acceptable. For a
@@ -275,11 +290,6 @@ turning anonymous off properly means supplying credentials, which is a
 deployment decision this component does not get to invent. It stops being
 defensible the moment anything here is writable, which is why the address space
 has no writable node.
-
-**Server authentication, from the client side.** The probe accepts whatever
-certificate the server presents, and prints a warning saying so on every run.
-Encryption without verification stops eavesdropping and does nothing about an
-impersonator who can answer on the address.
 
 Encryption costs about 4 ms on the subscription path here — a median of 14.0 ms
 against 10.1 ms unencrypted, on the same intervals. Small, real, and worth

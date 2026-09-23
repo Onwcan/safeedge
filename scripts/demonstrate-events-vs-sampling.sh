@@ -66,7 +66,9 @@ SAFEEDGE_SNAPSHOT_SHM="$REGION" SAFEEDGE_OPCUA_PORT="$PORT" \
   "$UA_BUILD/safeedge-opcua" >/tmp/ev_srv.log 2>&1 &
 sleep 3
 
-"$UA_BUILD/safeedge-opcua-probe" --endpoint "opc.tcp://127.0.0.1:$PORT" \
+# This local delivery experiment uses a temporary, self-signed server identity.
+"$UA_BUILD/safeedge-opcua-probe" --insecure-accept-any-server-cert \
+  --endpoint "opc.tcp://127.0.0.1:$PORT" \
   --sampling-ms "$SAMPLING_MS" --seconds 20 --events >/tmp/ev_probe.log 2>&1 &
 PROBE_PID=$!
 sleep 4

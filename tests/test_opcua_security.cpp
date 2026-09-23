@@ -8,12 +8,18 @@
 
 #include <gtest/gtest.h>
 
+#include <open62541/client.h>
+#include <open62541/client_config_default.h>
+#include <open62541/plugin/create_certificate.h>
+#include <open62541/plugin/log_stdout.h>
 #include <open62541/server.h>
 #include <open62541/server_config_default.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -170,6 +176,17 @@ class TrustListDirectory {
 
   [[nodiscard]] std::string string() const { return path_.string(); }
 
+  bool addCertificate(const UA_ByteString& certificate) const {
+    const auto file = path_ / "trusted.der";
+    std::FILE* out = std::fopen(file.string().c_str(), "wb");
+    if (out == nullptr) {
+      return false;
+    }
+    const std::size_t written = std::fwrite(certificate.data, 1, certificate.length, out);
+    std::fclose(out);
+    return written == certificate.length;
+  }
+
  private:
   std::filesystem::path path_;
 };
@@ -223,6 +240,173 @@ TEST_F(SecurityFixture, TheDefaultPostureAcceptsAnyClientAndSaysSo) {
   // restricts who may connect from one that does not.
   EXPECT_NE(posture.detail.find("any client certificate accepted"), std::string::npos)
       << posture.detail;
+}
+
+TEST(ProbeServerVerification, TrustMustBeExplicitAndNonempty) {
+  UA_Client* client = UA_Client_new();
+  ASSERT_NE(client, nullptr);
+  ServerVerificationOptions opts;
+  EXPECT_FALSE(configureServerVerification(UA_Client_getConfig(client), opts).configured);
+  const TrustListDirectory empty(0);
+  opts.trust_list_directory = empty.string();
+  EXPECT_FALSE(configureServerVerification(UA_Client_getConfig(client), opts).configured);
+  opts.trust_list_directory = "/nonexistent/server-trust";
+  EXPECT_FALSE(configureServerVerification(UA_Client_getConfig(client), opts).configured);
+  const TrustListDirectory malformed(1);
+  opts.trust_list_directory = malformed.string();
+  EXPECT_FALSE(configureServerVerification(UA_Client_getConfig(client), opts).configured);
+  opts.insecure_accept_any_certificate = true;
+  EXPECT_FALSE(configureServerVerification(UA_Client_getConfig(client), opts).configured)
+      << "an insecure bypass must not silently override an operator's trust list";
+  UA_Client_delete(client);
+}
+
+// Both event loops run on the test thread. Binding loopback port zero gives each
+// test a private ephemeral port, so parallel CTest runs cannot steal a fixed one.
+class ProbeConnectionFixture : public SecurityFixture {
+ protected:
+  void SetUp() override {
+    SecurityFixture::SetUp();
+    ASSERT_NE(server_, nullptr);
+    const auto posture = configureSecurity(config(), options("", "", true));
+    ASSERT_GT(posture.policy_count, 0u) << posture.detail;
+    ASSERT_GT(config()->endpointsSize, 0u);
+    bool saved_server_certificate = false;
+    for (std::size_t i = 0; i < config()->securityPoliciesSize; ++i) {
+      const auto& certificate = config()->securityPolicies[i].localCertificate;
+      if (certificate.length > 0) {
+        saved_server_certificate = server_trust_.addCertificate(certificate);
+        break;
+      }
+    }
+    ASSERT_TRUE(saved_server_certificate);
+
+    UA_Array_delete(config()->serverUrls, config()->serverUrlsSize,
+                    &UA_TYPES[UA_TYPES_STRING]);
+    config()->serverUrls = UA_String_new();
+    ASSERT_NE(config()->serverUrls, nullptr);
+    config()->serverUrlsSize = 1;
+    config()->serverUrls[0] = UA_STRING_ALLOC("opc.tcp://127.0.0.1:0");
+    ASSERT_EQ(UA_Server_run_startup(server_), UA_STATUSCODE_GOOD);
+    started_ = true;
+    for (std::size_t i = 0; i < config()->applicationDescription.discoveryUrlsSize; ++i) {
+      const UA_String& url = config()->applicationDescription.discoveryUrls[i];
+      const std::string value(reinterpret_cast<const char*>(url.data), url.length);
+      if (value.starts_with("opc.tcp://127.0.0.1:") && !value.ends_with(":0")) {
+        endpoint_ = value;
+        break;
+      }
+    }
+    ASSERT_FALSE(endpoint_.empty());
+
+    const auto text = [](const char* value) {
+      return UA_String{std::strlen(value),
+                       reinterpret_cast<UA_Byte*>(const_cast<char*>(value))};
+    };
+    UA_String subject[] = {text("CN=safeedge-probe-test")};
+    UA_String alt_names[] = {text("URI:urn:safeedge:probe:test"), text("DNS:localhost")};
+    UA_ByteString certificate = UA_BYTESTRING_NULL;
+    UA_ByteString key = UA_BYTESTRING_NULL;
+    const UA_StatusCode generated =
+        UA_CreateCertificate(UA_Log_Stdout, subject, 1, alt_names, 2,
+                             UA_CERTIFICATEFORMAT_DER, nullptr, &key, &certificate);
+    if (generated == UA_STATUSCODE_GOOD) {
+      // Trusting the client certificate instead gives a valid, unrelated anchor.
+      EXPECT_TRUE(unrelated_trust_.addCertificate(certificate));
+      client_ = UA_Client_new();
+      if (client_ != nullptr) {
+        configured_ = UA_ClientConfig_setDefaultEncryption(
+            UA_Client_getConfig(client_), certificate, key, nullptr, 0, nullptr, 0);
+      }
+    }
+    UA_ByteString_clear(&certificate);
+    UA_ByteString_clear(&key);
+    ASSERT_EQ(generated, UA_STATUSCODE_GOOD);
+    ASSERT_NE(client_, nullptr);
+    ASSERT_EQ(configured_, UA_STATUSCODE_GOOD);
+    UA_ClientConfig* client_config = UA_Client_getConfig(client_);
+    UA_String_clear(&client_config->clientDescription.applicationUri);
+    client_config->clientDescription.applicationUri =
+        UA_STRING_ALLOC("urn:safeedge:probe:test");
+    client_config->timeout = 2000;
+  }
+
+  void TearDown() override {
+    if (client_ != nullptr) {
+      UA_Client_disconnectAsync(client_);
+      for (int i = 0; started_ && i < 10; ++i) {
+        UA_Server_run_iterate(server_, false);
+        UA_Client_run_iterate(client_, 1);
+      }
+      UA_Client_delete(client_);
+    }
+    if (started_) {
+      UA_Server_run_shutdown(server_);
+    }
+    SecurityFixture::TearDown();
+  }
+
+  UA_StatusCode connect() {
+    UA_StatusCode result = UA_Client_connectAsync(client_, endpoint_.c_str());
+    if (result != UA_STATUSCODE_GOOD) {
+      return result;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+      UA_Server_run_iterate(server_, false);
+      UA_Client_run_iterate(client_, 1);
+      UA_SessionState session = UA_SESSIONSTATE_CLOSED;
+      UA_Client_getState(client_, nullptr, &session, &result);
+      if (result != UA_STATUSCODE_GOOD || session == UA_SESSIONSTATE_ACTIVATED) {
+        return result;
+      }
+    }
+    return UA_STATUSCODE_BADTIMEOUT;
+  }
+
+  TrustListDirectory server_trust_{0};
+  TrustListDirectory unrelated_trust_{0};
+  UA_Client* client_{nullptr};
+
+ private:
+  bool started_{false};
+  UA_StatusCode configured_{UA_STATUSCODE_BADINTERNALERROR};
+  std::string endpoint_;
+};
+
+TEST_F(ProbeConnectionFixture, TrustedServerConnectsWithEncryption) {
+  ServerVerificationOptions opts;
+  opts.trust_list_directory = server_trust_.string();
+  const auto posture = configureServerVerification(UA_Client_getConfig(client_), opts);
+  ASSERT_TRUE(posture.configured) << posture.detail;
+  ASSERT_TRUE(posture.verifies_server_certificate);
+  EXPECT_EQ(posture.trusted_certificate_count, 1u);
+  ASSERT_EQ(connect(), UA_STATUSCODE_GOOD);
+  UA_MessageSecurityMode mode = UA_MESSAGESECURITYMODE_INVALID;
+  ASSERT_EQ(UA_Client_getConnectionAttribute_scalar(
+                client_, UA_QUALIFIEDNAME(0, const_cast<char*>("securityMode")),
+                &UA_TYPES[UA_TYPES_MESSAGESECURITYMODE], &mode),
+            UA_STATUSCODE_GOOD);
+  EXPECT_EQ(mode, UA_MESSAGESECURITYMODE_SIGNANDENCRYPT);
+}
+
+TEST_F(ProbeConnectionFixture, UntrustedServerIsRejectedEvenWhenItOffersPlaintext) {
+  ServerVerificationOptions opts;
+  opts.trust_list_directory = unrelated_trust_.string();
+  const auto posture = configureServerVerification(UA_Client_getConfig(client_), opts);
+  ASSERT_TRUE(posture.configured) << posture.detail;
+  ASSERT_TRUE(posture.verifies_server_certificate);
+  EXPECT_EQ(connect(), UA_STATUSCODE_BADCERTIFICATEUNTRUSTED);
+}
+
+TEST_F(ProbeConnectionFixture, ExplicitInsecureBypassConnectsAndReportsNoVerification) {
+  ServerVerificationOptions opts;
+  opts.insecure_accept_any_certificate = true;
+  const auto posture = configureServerVerification(UA_Client_getConfig(client_), opts);
+  ASSERT_TRUE(posture.configured) << posture.detail;
+  EXPECT_FALSE(posture.verifies_server_certificate);
+  EXPECT_NE(posture.detail.find("DISABLED"), std::string::npos);
+  EXPECT_EQ(connect(), UA_STATUSCODE_GOOD);
 }
 
 }  // namespace

@@ -30,9 +30,26 @@
 #define SAFEEDGE_THREAD_SANITIZER 1
 #endif
 
+#if defined(SAFEEDGE_TEST_WRAP_C_ALLOCATIONS) && !defined(SAFEEDGE_THREAD_SANITIZER)
+// Only the test variant is linked with --wrap=malloc. Bypass that
+// wrapper here: operator new already records the allocation, so counting its
+// backing malloc again would turn one C++ allocation into two violations.
+// The reserved symbol spelling is required by the linker's --wrap interface.
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp,readability-identifier-naming)
+extern "C" void* __real_malloc(std::size_t bytes) noexcept;
+#endif
+
 namespace {
 
 #if !defined(SAFEEDGE_THREAD_SANITIZER)
+void* allocate(std::size_t bytes) noexcept {
+#if defined(SAFEEDGE_TEST_WRAP_C_ALLOCATIONS)
+  return __real_malloc(bytes);
+#else
+  return std::malloc(bytes);
+#endif
+}
+
 /// aligned_alloc requires the requested size to be a multiple of the alignment.
 std::size_t roundUpTo(std::size_t value, std::size_t alignment) noexcept {
   const std::size_t remainder = value % alignment;
@@ -67,7 +84,7 @@ extern "C" void __sanitizer_malloc_hook(const volatile void*, std::size_t bytes)
 
 void* operator new(std::size_t bytes) {
   safeedge::rt::detail::noteAllocation(bytes);
-  void* pointer = std::malloc(bytes == 0 ? 1 : bytes);
+  void* pointer = allocate(bytes == 0 ? 1 : bytes);
   if (pointer == nullptr) {
     throw std::bad_alloc();
   }
@@ -78,7 +95,7 @@ void* operator new[](std::size_t bytes) { return ::operator new(bytes); }
 
 void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
   safeedge::rt::detail::noteAllocation(bytes);
-  return std::malloc(bytes == 0 ? 1 : bytes);
+  return allocate(bytes == 0 ? 1 : bytes);
 }
 
 void* operator new[](std::size_t bytes, const std::nothrow_t& tag) noexcept {

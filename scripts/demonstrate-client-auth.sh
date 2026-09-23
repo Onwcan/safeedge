@@ -68,7 +68,9 @@ stop_server() {
 try_connect() {
   local log="$1"
   shift
-  "$UA_BUILD/safeedge-opcua-probe" --endpoint "opc.tcp://127.0.0.1:$PORT" \
+  # This experiment checks client authentication against a temporary server.
+  "$UA_BUILD/safeedge-opcua-probe" --insecure-accept-any-server-cert \
+    --endpoint "opc.tcp://127.0.0.1:$PORT" \
     --seconds 3 "$@" >"$log" 2>&1
   grep -q "^connected to" "$log"
 }
@@ -215,10 +217,10 @@ mkdir -p "$OUT" "$WORK/trust" "$WORK/trusted-id" "$WORK/stranger-id"
   echo "holds. A warning that was true for a moment is still a warning someone"
   echo "has to reason about at three in the morning."
   echo
-  echo "The clients here also still accept whatever certificate the server"
-  echo "presents. Authentication in this direction is what section 1 measures;"
-  echo "the other direction needs a trust list on the client, and the probe"
-  echo "prints a warning on every run saying it does not have one."
+  echo "This experiment explicitly uses --insecure-accept-any-server-cert"
+  echo "because the server has a temporary identity. Section 1 measures client"
+  echo "authentication. To authenticate the server as well, provision a stable"
+  echo "server certificate and pass --trust-list DIR to the probe instead."
   echo
   if [ "$FAILURES" -eq 0 ]; then
     echo "All checks held."

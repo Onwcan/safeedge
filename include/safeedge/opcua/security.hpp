@@ -7,6 +7,7 @@
 
 struct UA_Server;
 struct UA_ServerConfig;
+struct UA_ClientConfig;
 
 namespace safeedge::opcua {
 
@@ -131,6 +132,27 @@ struct SecurityPosture {
 /// here is writable, which is why the address space has no writable node.
 SecurityPosture configureSecurity(UA_ServerConfig* config,
                                   const SecurityOptions& options);
+
+/// Trust anchors for the probe's server, independent of the probe's own identity.
+struct ServerVerificationOptions {
+  /// Flat directory of DER certificates. Required unless the insecure bypass
+  /// is explicitly selected; an empty directory never means trust everyone.
+  std::string trust_list_directory;
+  bool insecure_accept_any_certificate{false};
+};
+
+struct ServerVerificationPosture {
+  bool configured{false};
+  bool verifies_server_certificate{false};
+  std::size_t trusted_certificate_count{0};
+  std::string detail;
+};
+
+/// Install server verification after configuring the client's encrypted identity.
+/// Requires SignAndEncrypt so a plaintext endpoint cannot bypass verification.
+/// A failed configuration must not be used to connect.
+ServerVerificationPosture configureServerVerification(
+    UA_ClientConfig* config, const ServerVerificationOptions& options);
 
 /// Whether this build has a crypto backend at all.
 bool encryptionAvailable() noexcept;

@@ -130,14 +130,19 @@ allocate.
 
 **Negative**
 
-- **Only `operator new` is intercepted.** A direct `malloc`, `calloc`,
-  `realloc` or `strdup` from C code — inside libc, or in a third-party C
-  library — passes through unseen. Catching those needs symbol interposition or
-  an `LD_PRELOAD` shim, both of which are fragile and can deadlock when the
-  reporting path itself allocates. For the code in this repository, which is
-  C++ throughout, `operator new` is the complete surface. **For linked-in C
-  dependencies it is not, and that is a real gap rather than a theoretical
-  one.**
+- **Production coverage remains `operator new` only.** Linux RT, safety and IPC
+  tests additionally use linker wrappers for `malloc`, `calloc`, `realloc` and
+  `free`. Allocation attempts use the existing non-allocating reporter; `free`
+  forwards to the real allocator without recording an allocation. A test-only
+  build of the C++ hooks bypasses these wrappers for its backing allocator calls
+  so one `new` remains one violation. Neither the wrappers nor that test variant
+  are installed or linked into production executables.
+
+  Link wrapping covers direct calls from the executable and static dependencies.
+  It does not intercept allocator calls within shared libraries or other APIs
+  such as `strdup`. This is a bounded test-harness guarantee, not full-process
+  allocator interposition. Positive controls retain their pointers through
+  volatile sinks so Debug and Release exercise the actual C allocation calls.
 - **The guard cannot see an allocation the compiler removed.** [expr.new]/10
   permits omitting the allocation call for a new-expression whose result the
   implementation can prove is unused, and both GCC and Clang do this at `-O2`.

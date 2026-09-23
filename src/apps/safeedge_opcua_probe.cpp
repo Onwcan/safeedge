@@ -33,7 +33,6 @@
 #include <open62541/client_subscriptions.h>
 #include <open62541/plugin/create_certificate.h>
 #include <open62541/plugin/log_stdout.h>
-#include <open62541/plugin/pki_default.h>
 #include <open62541/types.h>
 
 #include <algorithm>
@@ -253,8 +252,31 @@ int main(int argc, char** argv) {
   std::string cert_path;
   std::string key_path;
   std::string write_identity;
+  safeedge::opcua::ServerVerificationOptions verification_options;
   bool subscribe_events = false;
-  for (int i = 1; i + 1 < argc; i += 2) {
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--events") == 0) {
+      subscribe_events = true;
+      continue;
+    }
+    if (std::strcmp(argv[i], "--insecure-accept-any-server-cert") == 0) {
+      verification_options.insecure_accept_any_certificate = true;
+      continue;
+    }
+    if (std::strcmp(argv[i], "--help") == 0) {
+      std::printf(
+          "usage: safeedge-opcua-probe [--endpoint URL] [--sampling-ms MS] [--seconds "
+          "N]\n"
+          "       [--cert CLIENT.der --key CLIENT-KEY.der] [--events]\n"
+          "       --trust-list DIR | --insecure-accept-any-server-cert\n"
+          "       safeedge-opcua-probe --write-identity DIR\n"
+          "--trust-list loads trusted server certificates from DIR/*.der.\n");
+      return 0;
+    }
+    if (i + 1 >= argc) {
+      std::printf("missing value for %s (see --help)\n", argv[i]);
+      return 1;
+    }
     if (std::strcmp(argv[i], "--endpoint") == 0) {
       endpoint = argv[i + 1];
     } else if (std::strcmp(argv[i], "--sampling-ms") == 0) {
@@ -267,12 +289,17 @@ int main(int argc, char** argv) {
       key_path = argv[i + 1];
     } else if (std::strcmp(argv[i], "--write-identity") == 0) {
       write_identity = argv[i + 1];
+    } else if (std::strcmp(argv[i], "--trust-list") == 0) {
+      verification_options.trust_list_directory = argv[i + 1];
+    } else {
+      std::printf("unknown option %s (see --help)\n", argv[i]);
+      return 1;
     }
+    ++i;
   }
-  for (int i = 1; i < argc; ++i) {
-    if (std::strcmp(argv[i], "--events") == 0) {
-      subscribe_events = true;
-    }
+  if (cert_path.empty() != key_path.empty()) {
+    std::printf("--cert and --key must be provided together\n");
+    return 1;
   }
 
 #ifdef UA_ENABLE_ENCRYPTION
@@ -302,6 +329,10 @@ int main(int argc, char** argv) {
 #endif
 
   UA_Client* client = UA_Client_new();
+  if (client == nullptr) {
+    std::printf("could not create a client\n");
+    return 1;
+  }
   UA_ClientConfig* client_config = UA_Client_getConfig(client);
 
 #ifdef UA_ENABLE_ENCRYPTION
@@ -328,39 +359,68 @@ int main(int argc, char** argv) {
     UA_Client_delete(client);
     return 1;
   }
-  UA_ClientConfig_setDefaultEncryption(client_config, client_cert, client_key, nullptr, 0,
-                                       nullptr, 0);
+  const UA_StatusCode configured = UA_ClientConfig_setDefaultEncryption(
+      client_config, client_cert, client_key, nullptr, 0, nullptr, 0);
   UA_String_clear(&client_config->clientDescription.applicationUri);
   client_config->clientDescription.applicationUri = UA_STRING_ALLOC(kProbeApplicationUri);
   UA_ByteString_clear(&client_cert);
   UA_ByteString_clear(&client_key);
-
-  // Accepts whatever certificate the server presents.
-  //
-  // This is the thing a real client must not do, and saying so is the point.
-  // A production client validates against a trust list, or pins the server's
-  // certificate, so that an attacker who can answer on this address cannot
-  // simply present their own certificate and be believed. Encryption without
-  // verification stops passive eavesdropping and does nothing about an active
-  // impersonator.
-  //
-  // A diagnostic probe pointed at localhost is the one case where accepting any
-  // certificate is defensible, and it is defensible only because it is stated.
-  UA_CertificateVerification_AcceptAll(&client_config->certificateVerification);
-  std::printf(
-      "NOTE: this probe accepts any server certificate. A real client validates\n"
-      "      against a trust list -- encryption without verification stops\n"
-      "      eavesdropping and not impersonation.\n");
+  if (configured != UA_STATUSCODE_GOOD) {
+    std::printf("could not configure the client identity: %s\n",
+                UA_StatusCode_name(configured));
+    UA_Client_delete(client);
+    return 1;
+  }
 #else
-  UA_ClientConfig_setDefault(client_config);
+  std::printf("this probe requires a build with encryption enabled\n");
+  UA_Client_delete(client);
+  return 1;
 #endif
 
-  if (UA_Client_connect(client, endpoint.c_str()) != UA_STATUSCODE_GOOD) {
-    std::printf("could not connect to %s\n", endpoint.c_str());
+  const auto verification =
+      safeedge::opcua::configureServerVerification(client_config, verification_options);
+  if (!verification.configured) {
+    std::printf("could not configure server verification: %s\n",
+                verification.detail.c_str());
+    UA_Client_delete(client);
+    return 1;
+  }
+  if (!verification.verifies_server_certificate) {
+    std::printf(
+        "WARNING: this probe accepts any server certificate. Encryption without\n"
+        "         verification does not protect against server impersonation.\n");
+  }
+
+  const UA_StatusCode connected = UA_Client_connect(client, endpoint.c_str());
+  if (connected != UA_STATUSCODE_GOOD) {
+    std::printf("could not connect to %s: %s\n", endpoint.c_str(),
+                UA_StatusCode_name(connected));
     UA_Client_delete(client);
     return 1;
   }
   std::printf("connected to %s\n", endpoint.c_str());
+  // Read the live SecureChannel attributes. Configuration fields constrain
+  // negotiation; they do not report what the connection actually negotiated.
+  UA_String policy = UA_STRING_NULL;
+  UA_MessageSecurityMode mode = UA_MESSAGESECURITYMODE_INVALID;
+  const UA_QualifiedName policy_attribute{0, literalString("securityPolicyUri")};
+  const UA_QualifiedName mode_attribute{0, literalString("securityMode")};
+  if (UA_Client_getConnectionAttribute_scalar(client, policy_attribute,
+                                              &UA_TYPES[UA_TYPES_STRING],
+                                              &policy) != UA_STATUSCODE_GOOD ||
+      UA_Client_getConnectionAttribute_scalar(client, mode_attribute,
+                                              &UA_TYPES[UA_TYPES_MESSAGESECURITYMODE],
+                                              &mode) != UA_STATUSCODE_GOOD ||
+      mode != UA_MESSAGESECURITYMODE_SIGNANDENCRYPT) {
+    std::printf("could not confirm the encrypted SecureChannel security attributes\n");
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    return 1;
+  }
+  const std::string policy_uri(reinterpret_cast<const char*>(policy.data), policy.length);
+  std::printf("negotiated SecurityPolicy: %s; SecurityMode: SignAndEncrypt\n",
+              policy_uri.c_str());
+  std::printf("server certificate verification: %s\n", verification.detail.c_str());
 
   // Resolve the namespace by URI. This is the client half of the contract the
   // server's address space documents: the index is per-session and moves, the

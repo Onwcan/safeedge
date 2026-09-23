@@ -26,10 +26,11 @@ no-allocation rule enforced rather than documented.
 | WP-11b | External emergency stop, acknowledgement, timestamped safety signal | **Done** |
 | WP-11c | `opcua` — OPC UA server, in its own process | **Done** |
 
-**211 core tests** pass under Debug, Release, ASan+UBSan and ThreadSanitizer.
-The encrypted OPC UA configuration adds twenty-two more for **233 tests** — ten
-on the security posture, eight on transition events, four on the address space
-— plus a libFuzzer target on the telegram decoder. The shared-memory tests
+**218 core tests** cover the runtime, including seven C allocator guard checks.
+CI runs the core suite under Debug, Release, ASan+UBSan and ThreadSanitizer.
+The encrypted OPC UA configuration adds twenty-six more for **244 tests** —
+fourteen on security and certificate verification, eight on transition events,
+four on the address space — plus a libFuzzer target on the telegram decoder. The shared-memory tests
 genuinely `fork()` rather than simulating a second process with a thread.
 
 **65 requirements**, every one linked to implementing code and verifying tests,
@@ -238,9 +239,23 @@ should find out from the log rather than from an intrusion.
 clients, one trusted and one not, and greps the specific status code rather than
 the word "certificate" — which also appears in the startup line and would have
 made the check unfailable. It carries a negative control: that rejection must
-*not* appear when no trust list is set. What is still not addressed is user
-identity, and the probe's own trust in the server: it accepts whatever
-certificate the server presents and says so on every run.
+*not* appear when no trust list is set. User identity remains anonymous.
+
+The probe verifies the server against the DER certificates in `--trust-list DIR`.
+Provision a stable server certificate with `SAFEEDGE_OPCUA_CERT` and
+`SAFEEDGE_OPCUA_KEY`, and place the trusted certificate in that directory before
+connecting:
+
+```bash
+safeedge-opcua-probe --endpoint opc.tcp://localhost:4840 --trust-list ./server-trust
+```
+
+Missing or unusable trust material fails closed. For a local demonstration with
+a temporary server identity, `--insecure-accept-any-server-cert` explicitly opts
+out of server authentication and prints a warning. Both paths require an
+encrypted channel, and the connected probe prints the negotiated SecurityPolicy
+and whether the server certificate was verified. The demonstration scripts use
+the explicit insecure flag because their server identities are temporary.
 
 **A subscription on a variable delivers samples, not changes.** The server reads
 the node every `samplingInterval` and reports it when it differs from last time,
@@ -396,8 +411,15 @@ It has already earned its place — it is what proves the claims other component
 make. `SpscRing` says it never allocates; that is now a passing test rather than
 a sentence in an ADR. [ADR-0004](docs/adr/0004-enforcing-the-no-allocation-rule.md).
 
-**Known limit, stated plainly:** only `operator new` is intercepted. A direct
-`malloc` from linked-in C code passes through unseen.
+The Linux RT, safety and IPC test harnesses also wrap direct `malloc`, `calloc`,
+`realloc` and `free` calls at link time. C allocation attempts reach the same
+guard; `free` is forwarded without counting a new allocation. The test variant
+avoids counting `operator new`'s backing allocation twice. This instrumentation
+is not linked into production binaries or installed as a public target.
+
+Link wrapping covers calls from the executable and statically linked objects,
+not allocator calls hidden inside shared libraries. The production guard still
+intercepts only `operator new`.
 
 ### `safety::SafetySender` / `safety::SafetyReceiver` — the black channel
 
@@ -737,7 +759,10 @@ none it could honestly be traced to. [ADR-0007](docs/adr/0007-mechanical-traceab
 - **Memory ordering is validated on x86-64 only.** x86-64's strong memory model
   will hide an ordering bug that AArch64 would expose, and AArch64 is where
   industrial edge devices increasingly are.
-- **Only `operator new` is guarded**, not `malloc` from C dependencies.
+- **C allocator coverage is test-only and limited to link-visible calls.** The
+  production guard covers `operator new`; calls inside shared libraries and
+  indirect C allocation APIs such as `strdup` are outside the link-wrapper
+  guarantee.
 - **The guard cannot see an allocation the compiler elided.** [expr.new]/10
   lets an implementation omit the allocation call when it can prove the result
   is unused, so Release reports fewer violations than Debug. Harmless in

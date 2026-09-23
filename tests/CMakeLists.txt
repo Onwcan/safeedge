@@ -9,6 +9,28 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
+# GNU-compatible ELF linkers can wrap allocator references in the test binary
+# and its static dependencies. Keep this target local to tests: shipped targets
+# continue linking the normal C++-only guard, with no C allocator interposition.
+set(SAFEEDGE_TEST_ALLOC_GUARD safeedge::rt_alloc_guard)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_library(safeedge_test_alloc_guard STATIC
+    ${PROJECT_SOURCE_DIR}/src/rt/no_alloc_guard_hooks.cpp
+    c_alloc_guard.cpp)
+  target_compile_definitions(safeedge_test_alloc_guard
+    PRIVATE SAFEEDGE_TEST_WRAP_C_ALLOCATIONS)
+  target_link_libraries(safeedge_test_alloc_guard
+    PUBLIC safeedge::rt
+    PRIVATE safeedge::warnings)
+  target_link_options(safeedge_test_alloc_guard INTERFACE
+    "LINKER:--wrap=malloc"
+    "LINKER:--wrap=calloc"
+    "LINKER:--wrap=realloc"
+    "LINKER:--wrap=free")
+  set(SAFEEDGE_TEST_ALLOC_GUARD safeedge_test_alloc_guard)
+endif()
+
 add_executable(safeedge_tests
   test_spsc_ring.cpp)
 target_link_libraries(safeedge_tests
@@ -32,10 +54,13 @@ add_executable(safeedge_rt_tests
   test_latency_histogram.cpp
   test_no_alloc_guard.cpp
   test_cyclic_executor.cpp)
+if(TARGET safeedge_test_alloc_guard)
+  target_sources(safeedge_rt_tests PRIVATE test_c_alloc_guard.cpp)
+endif()
 target_link_libraries(safeedge_rt_tests PRIVATE
   safeedge::rt
   safeedge::warnings
-  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>"
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,${SAFEEDGE_TEST_ALLOC_GUARD}>"
   GTest::gtest_main)
 gtest_discover_tests(safeedge_rt_tests
   PROPERTIES LABELS unit TIMEOUT 300
@@ -50,7 +75,7 @@ target_link_libraries(safeedge_safety_tests PRIVATE
   safeedge::safety
   safeedge::rt
   safeedge::warnings
-  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>"
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,${SAFEEDGE_TEST_ALLOC_GUARD}>"
   GTest::gtest_main)
 gtest_discover_tests(safeedge_safety_tests
   PROPERTIES LABELS unit TIMEOUT 300
@@ -63,7 +88,7 @@ target_link_libraries(safeedge_ipc_tests PRIVATE
   safeedge::ipc
   safeedge::rt
   safeedge::warnings
-  "$<LINK_LIBRARY:WHOLE_ARCHIVE,safeedge::rt_alloc_guard>"
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,${SAFEEDGE_TEST_ALLOC_GUARD}>"
   GTest::gtest_main)
 gtest_discover_tests(safeedge_ipc_tests
   PROPERTIES LABELS unit TIMEOUT 300

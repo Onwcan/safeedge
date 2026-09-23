@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "safeedge/opcua/security.hpp"
 
+#include <open62541/client.h>
 #include <open62541/plugin/log_stdout.h>
 #include <open62541/server_config_default.h>
 
@@ -141,6 +142,59 @@ bool encryptionAvailable() noexcept {
 #else
   return false;
 #endif
+}
+
+ServerVerificationPosture configureServerVerification(
+    UA_ClientConfig* config, const ServerVerificationOptions& options) {
+  ServerVerificationPosture posture;
+  if (config == nullptr) {
+    posture.detail = "no client config";
+    return posture;
+  }
+  if (options.insecure_accept_any_certificate && !options.trust_list_directory.empty()) {
+    posture.detail =
+        "--trust-list and --insecure-accept-any-server-cert are mutually exclusive";
+    return posture;
+  }
+#ifdef UA_ENABLE_ENCRYPTION
+  // Checking certificates is ineffective if endpoint selection can choose None.
+  config->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+  if (options.insecure_accept_any_certificate) {
+    UA_CertificateVerification_AcceptAll(&config->certificateVerification);
+    posture.configured = true;
+    posture.detail = "DISABLED (--insecure-accept-any-server-cert)";
+    return posture;
+  }
+  if (options.trust_list_directory.empty()) {
+    posture.detail =
+        "server verification requires --trust-list DIR; "
+        "use --insecure-accept-any-server-cert only for an intentional insecure demo";
+    return posture;
+  }
+  std::vector<UA_ByteString> trust_list = readTrustList(options.trust_list_directory);
+  posture.trusted_certificate_count = trust_list.size();
+  if (trust_list.empty()) {
+    posture.detail =
+        "no server certificates loaded from '" + options.trust_list_directory + "'";
+    return posture;
+  }
+  const UA_StatusCode result = UA_CertificateVerification_Trustlist(
+      &config->certificateVerification, trust_list.data(), trust_list.size(), nullptr, 0,
+      nullptr, 0);
+  clearTrustList(trust_list);
+  if (result != UA_STATUSCODE_GOOD) {
+    posture.detail = "could not configure server trust list: " +
+                     std::string(UA_StatusCode_name(result));
+    return posture;
+  }
+  posture.configured = true;
+  posture.verifies_server_certificate = true;
+  posture.detail = "ENABLED (" + std::to_string(posture.trusted_certificate_count) +
+                   " trusted certificate(s) from " + options.trust_list_directory + ")";
+#else
+  posture.detail = "server verification requires a build with encryption enabled";
+#endif
+  return posture;
 }
 
 SecurityPosture configureSecurity(UA_ServerConfig* config,

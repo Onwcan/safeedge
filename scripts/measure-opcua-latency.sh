@@ -42,7 +42,9 @@ run_case() {
     "$UA_BUILD/safeedge-opcua" >/tmp/sweep_srv.log 2>&1 &
   sleep 3
 
-  "$UA_BUILD/safeedge-opcua-probe" --endpoint "opc.tcp://127.0.0.1:$PORT" \
+  # This local timing experiment uses a temporary, self-signed server identity.
+  "$UA_BUILD/safeedge-opcua-probe" --insecure-accept-any-server-cert \
+    --endpoint "opc.tcp://127.0.0.1:$PORT" \
     --sampling-ms "$sampling_ms" --seconds 22 >/tmp/sweep_probe.log 2>&1 &
   local probe_pid=$!
   sleep 4
